@@ -3,7 +3,9 @@
 import html
 import json
 import os
+import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -116,6 +118,10 @@ div[data-testid="stAlert"],
   background: {_RED_BG};
   color: {_RED_FG};
 }}
+.cs-notif--unverified {{
+  background: {C_LAYER2};
+  color: {C_TEXT2};
+}}
 .cs-notif svg {{ flex-shrink: 0; margin-top: 1px; }}
 .cs-notif-body {{ display: flex; flex-direction: column; gap: 2px; }}
 .cs-notif-title {{ font-weight: 600; }}
@@ -165,20 +171,42 @@ def load_rules(rules_file: str) -> list[dict]:
     return sorted(rules, key=priority_key)
 
 
-def run_verify_chain() -> tuple[bool, str]:
-    """Run `python countersign.py verify-chain` and return (ok, output)."""
+_ERROR_LINE_RE = re.compile(r"^\w+(Error|Exception):")
+
+
+def _first_error_line(output: str) -> str:
+    """Return the exception line of a traceback, else the first non-empty line."""
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    for ln in lines:
+        if _ERROR_LINE_RE.match(ln):
+            return ln
+    return lines[0] if lines else "no output"
+
+
+def run_verify_chain() -> tuple[str, str]:
+    """Run `countersign.py verify-chain`; return (status, message).
+
+    status is PASS, FAIL, or UNVERIFIED. FAIL only when verify-chain ran and
+    reported a broken chain; if it could not run there is no evidence, so the
+    status is UNVERIFIED, never FAIL.
+    """
     try:
         result = subprocess.run(
-            ["python", "countersign.py", "verify-chain"],
+            [sys.executable, "countersign.py", "verify-chain"],
             capture_output=True,
             text=True,
             timeout=15,
             check=False,
         )
-        ok = result.returncode == 0
-        return ok, (result.stdout or result.stderr or "").strip()
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"verify-chain unavailable: {exc}"
+        return "UNVERIFIED", _first_error_line(str(exc))
+    output = "\n".join(s for s in (result.stdout, result.stderr) if s).strip()
+    if result.returncode == 0:
+        return "PASS", output
+    crashed = "Traceback" in output or "ModuleNotFoundError" in output
+    if not crashed and any(ln.startswith("FAIL:") for ln in output.splitlines()):
+        return "FAIL", output
+    return "UNVERIFIED", _first_error_line(output)
 
 
 # ---------------------------------------------------------------------------
@@ -256,12 +284,18 @@ def _tag(status: str) -> str:
     return f'<span class="cs-tag cs-tag--unverified">{_SVG_HELP} UNVERIFIED</span>'
 
 
-def _notif_html(ok: bool, msg: str) -> str:
+_NOTIF_VARIANTS: dict[str, tuple[str, str, str, str]] = {
+    # status -> (css variant, icon, icon colour, title)
+    "PASS":       ("success",    _SVG_CHECK, _GREEN_FG, "Chain intact"),
+    "FAIL":       ("error",      _SVG_ERROR, _RED_FG,   "Chain broken"),
+    "UNVERIFIED": ("unverified", _SVG_HELP,  C_TEXT2,
+                   "Chain status UNVERIFIED: verify-chain could not run"),
+}
+
+
+def _notif_html(status: str, msg: str) -> str:
     """Return a Carbon inline-notification HTML block. msg is escaped internally."""
-    variant   = "success" if ok else "error"
-    svg       = _SVG_CHECK if ok else _SVG_ERROR
-    icon_col  = _GREEN_FG if ok else _RED_FG
-    title     = "Chain intact" if ok else "Chain broken"
+    variant, svg, icon_col, title = _NOTIF_VARIANTS.get(status, _NOTIF_VARIANTS["UNVERIFIED"])
     safe_msg  = html.escape(msg)
     return (
         f'<div class="cs-notif cs-notif--{variant}">'
@@ -339,8 +373,8 @@ st.html(_CSS)
 st.title("Countersign Dashboard")
 
 # --- Carbon chain-status notification ---
-chain_ok, chain_msg = run_verify_chain()
-st.html(_notif_html(chain_ok, chain_msg))
+chain_status, chain_msg = run_verify_chain()
+st.html(_notif_html(chain_status, chain_msg))
 
 records = load_records(str(RECORDS_DIR))
 rules   = load_rules(str(RULES_FILE))

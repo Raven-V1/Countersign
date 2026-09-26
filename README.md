@@ -2,6 +2,8 @@
 
 No evidence, no pass.
 
+Live dashboard: https://countersign.streamlit.app/
+
 ## Problem
 
 AI coding agents skip requirements or drop them silently, and security
@@ -94,6 +96,32 @@ COUNTERSIGN_SKIP_Z=1 git commit -m "..."
 Other commands: `verify-rules`, `approve-rules` (human only),
 `draft-rules --from <file>`, and `ci`. The dashboard runs with
 `streamlit run dashboard/app.py`.
+
+## Use Countersign in your own repo
+
+1. Copy `countersign.py`, `wx_explain.py`, `hooks/pre-commit`, `scripts/`,
+   `requirements.txt`, and `.github/workflows/countersign.yml`.
+2. Write your own `countersign.yaml`: a list of rules, each with `id`,
+   `requirement`, `priority` (`security`, `functional`, `quality`), `check`
+   (a shell command; exit 0 is PASS), `paths` (globs), and `ai_access`
+   (`none`, `read`, `edit`). Then run `python countersign.py approve-rules`
+   yourself.
+3. watsonx is optional. Set `IBM_CLOUD_API_KEY`, `WATSONX_URL`, and
+   `WATSONX_PROJECT_ID` in `.env`; without them, FAIL explanations are
+   skipped and the gate still works.
+4. Z is optional. To use it, set up your own Zowe profile, set `ZOS_USS_DIR`
+   to the USS directory the job reads (`$HOME/countersign`), and update the
+   Python path in `zos/VERIFY.jcl`. Otherwise run with `--skip-z`.
+5. Dashboard: deploy your fork on Streamlit Community Cloud with main file
+   `dashboard/app.py`.
+
+Settings live in `countersign.yaml`, not in the dashboard, on purpose: a
+settings UI would bypass the `approve-rules` human gate.
+
+Rough edges: it is not a pip package; the hook install script is PowerShell
+(the POSIX one-liner is in Quickstart); the Z verifier identifies security
+rules by the `SEC-` prefix, so security rule ids must start with it; DEMO-001
+is specific to the demo app and should be dropped.
 
 ## How Bob was used
 
