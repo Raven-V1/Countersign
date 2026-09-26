@@ -1,10 +1,16 @@
 # .gitattributes
+* text=auto
+
 # Ensure the pre-commit hook always has Unix line endings on every platform.
-hooks/pre-commit text eol=lf
+hooks/pre-commit           text eol=lf
+
+# Files whose content the generate_bob_rules script writes must stay LF.
+countersign.yaml           text eol=lf
+.bob/rules/countersign.md  text eol=lf
+.bobignore                 text eol=lf
 
 # Files whose SHA-256 is checked or chained must never have line endings
-# rewritten by Git — binary mode (-text) preserves bytes exactly.
-records/*.json      -text
-countersign.yaml    -text
-.countersign/*      -text
-.leak-baseline.json -text
+# rewritten by Git -- binary mode (-text) preserves bytes exactly.
+records/*.json             -text
+.countersign/*             -text
+.leak-baseline.json        -text

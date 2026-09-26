@@ -4,6 +4,7 @@ countersign.py — Countersign core engine.
 Subcommands:
   run             Run all checks, write evidence record, gate the commit.
   run --skip-z    Same but skip Z approval (records z_status=skipped_by_human).
+  check           Run all checks, print results; no record written, no Z, no watsonx.
   approve-rules   Write SHA-256 of countersign.yaml to .countersign/approved_rules.sha256.
   verify-rules    Exit 0 if countersign.yaml matches approved hash, else exit 1.
   verify-chain    Walk records/ in timestamp order and verify SHA-256 chain; exit 0/1.
@@ -308,9 +309,10 @@ def write_record(
 STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "UNVERIFIED": "?"}
 
 
-def print_summary(rules: list[dict], results: list[dict], record_path: Path) -> None:
+def print_summary(rules: list[dict], results: list[dict], record_path: Path | None = None) -> None:
     print("\n── Countersign Results ──────────────────────────────────────────")
-    print(f"  Record: {record_path}")
+    if record_path is not None:
+        print(f"  Record: {record_path}")
     print()
     col_id = max(len(r["id"]) for r in results)
     for res in results:
@@ -385,6 +387,40 @@ def cmd_run(skip_z: bool) -> int:
         return 1
 
     print("  ✓ All checks passed — commit approved.\n")
+    return 0
+
+
+def cmd_check() -> int:
+    """Run all checks and print results.
+
+    No record is written, no Z approval is contacted, no watsonx is called.
+    Exit code follows the same gate rule as `run`:
+      security FAIL/UNVERIFIED or functional FAIL -> exit 1
+      quality FAIL -> warning only, exit 0
+    """
+    rules = load_rules()
+    staged_files = get_staged_files()
+    scannable_files = get_staged_scannable_files()
+
+    print("Checking requirements (read-only, no record written)…")
+
+    results = run_checks(rules, staged_files, scannable_files)
+    blocking = collect_blocking(rules, results)
+
+    print_summary(rules, results, record_path=None)
+
+    if blocking:
+        print(f"  ✗ Would BLOCK commit — {len(blocking)} blocking failure(s):\n")
+        for b in blocking:
+            rule = next(r for r in rules if r["id"] == b["id"])
+            print(f"    [{b['id']}] {rule['requirement']}")
+            if b["output"]:
+                for line in b["output"].splitlines()[:5]:
+                    print(f"        {line}")
+            print()
+        return 1
+
+    print("  ✓ All checks pass.\n")
     return 0
 
 
@@ -637,6 +673,7 @@ def main() -> None:
         help="Skip Z approval; records z_status=skipped_by_human.",
     )
 
+    sub.add_parser("check", help="Run checks read-only: print results, no record, no Z, no watsonx.")
     sub.add_parser("approve-rules", help="Approve current countersign.yaml (human only).")
     sub.add_parser("verify-rules", help="Verify countersign.yaml matches approved hash.")
     sub.add_parser("verify-chain", help="Verify evidence record chain integrity.")
@@ -648,6 +685,8 @@ def main() -> None:
 
     if args.command == "run":
         sys.exit(cmd_run(skip_z=args.skip_z))
+    elif args.command == "check":
+        sys.exit(cmd_check())
     elif args.command == "approve-rules":
         sys.exit(cmd_approve_rules())
     elif args.command == "verify-rules":

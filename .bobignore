@@ -89,3 +89,13 @@ id_dsa
 # ============================================
 # DO NOT REMOVE ABOVE PATTERNS
 # ============================================
+
+# === Countersign project patterns ===
+# Auto-generated from countersign.yaml (ai_access: none).
+# Do not edit by hand - rerun scripts/generate_bob_rules.py.
+
+# SEC-003: countersign.yaml has not been silently modified since last approval
+countersign.yaml
+
+# SEC-004: Evidence record chain is intact (no record has been tampered with)
+records/*.json
