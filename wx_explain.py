@@ -348,11 +348,17 @@ def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def draft_explain(spec_text: str) -> tuple[str, str]:
+def draft_explain(
+    spec_text: str,
+    existing_ids: list[str] | None = None,
+) -> tuple[str, str]:
     """Send spec_text to Granite; return (raw_yaml_text, model_id).
 
     Returns ("", "") when credentials are absent or on any error.
-    spec_text is redacted before sending.
+    spec_text must already be redacted by the caller.
+
+    existing_ids: rule IDs already in countersign.yaml — the model will not
+    reuse them.
     """
     creds = _load_credentials()
     if not creds:
@@ -361,18 +367,35 @@ def draft_explain(spec_text: str) -> tuple[str, str]:
     api_key, url, project_id = creds
     safe_spec = _redact(spec_text)
 
+    existing_note = ""
+    if existing_ids:
+        existing_note = (
+            f"\nExisting rule IDs (do NOT reuse any of these): "
+            f"{', '.join(existing_ids)}\n"
+        )
+
     system_content = (
-        "You are an expert in software quality gates. "
+        "You are an expert in software quality gates.\n"
         "Read the project specification the user provides and produce YAML entries "
-        "for a countersign.yaml file. Each entry must follow this exact schema:\n\n"
-        "- id: <PREFIX-NNN>\n"
-        "  requirement: <plain-language description>\n"
-        "  priority: <security|functional|quality>\n"
-        "  check: <shell command or empty string>\n"
+        "for a countersign.yaml file.\n\n"
+        "Rules:\n"
+        "- Use IDs in the form SEC-NNN, FUNC-NNN, or QUAL-NNN (e.g. SEC-005).\n"
+        "- 'check' must be a SINGLE shell command with NO shell operators "
+        "(no | & ; > < ` $() and no newlines). Use an empty string if no "
+        "automated check is possible.\n"
+        "- 'priority' must be exactly one of: security, functional, quality.\n"
+        "- 'ai_access' must be exactly one of: none, read, edit.\n"
+        "- 'paths' must be a non-empty YAML list of glob strings.\n"
+        f"{existing_note}"
+        "\nEach entry must follow this exact schema:\n\n"
+        "- id: SEC-005\n"
+        "  requirement: No hard-coded credentials in source files\n"
+        "  priority: security\n"
+        "  check: \"python -m detect_secrets scan .\"\n"
         "  paths:\n"
-        "    - <glob pattern>\n"
-        "  ai_access: <none|read|edit>\n\n"
-        "Output ONLY valid YAML. Do not include explanations or markdown fences."
+        "    - \"**/*\"\n"
+        "  ai_access: read\n\n"
+        "Output ONLY valid YAML — no explanations, no markdown fences."
     )
 
     def _do_draft() -> tuple[str, str]:

@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -441,18 +442,172 @@ def cmd_verify_chain() -> int:
     return 0
 
 
+# Required top-level keys every proposed rule entry must contain.
+_RULE_REQUIRED_KEYS: frozenset[str] = frozenset(
+    {"id", "requirement", "priority", "check", "paths", "ai_access"}
+)
+# Optional keys that are also allowed.
+_RULE_OPTIONAL_KEYS: frozenset[str] = frozenset({"protect"})
+_RULE_ALL_KEYS: frozenset[str] = _RULE_REQUIRED_KEYS | _RULE_OPTIONAL_KEYS
+
+_VALID_PRIORITIES: frozenset[str] = frozenset({"security", "functional", "quality"})
+_VALID_AI_ACCESS: frozenset[str] = frozenset({"none", "read", "edit"})
+_RULE_ID_RE = re.compile(r"^[A-Z]+-\d{3}$")
+
+# Shell operators / features that _run() cannot handle (no shell=True)
+_UNSAFE_CHECK_RE = re.compile(r"[\n|&;><`]|\$\(")
+
+_FENCE_RE = re.compile(r"^```[a-z]*\n?", re.MULTILINE)
+
+
+def _strip_fences(text: str) -> str:
+    """Remove leading/trailing markdown code fences from model output."""
+    text = _FENCE_RE.sub("", text)
+    text = text.replace("```", "")
+    return text.strip()
+
+
+def _validate_proposed(entries: object) -> str:
+    """Return "" if entries is a valid list of rule dicts, else an error message.
+
+    Checks required keys, value constraints, and uniqueness of ids.
+    """
+    if not isinstance(entries, list) or len(entries) == 0:
+        return "Proposed YAML must be a non-empty list of rule entries."
+
+    seen_ids: set[str] = set()
+
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            return f"Entry {i} is not a mapping."
+
+        label = f"Entry {i} (id={entry.get('id', '?')!r})"
+
+        missing = _RULE_REQUIRED_KEYS - entry.keys()
+        if missing:
+            return f"{label} is missing required key(s): {', '.join(sorted(missing))}"
+
+        # id: matches ^[A-Z]+-\d{3}$
+        rid = entry["id"]
+        if not isinstance(rid, str) or not _RULE_ID_RE.match(rid):
+            return f"{label}: 'id' must match [A-Z]+-NNN (e.g. SEC-001), got {rid!r}"
+        if rid in seen_ids:
+            return f"Duplicate id {rid!r} in proposal."
+        seen_ids.add(rid)
+
+        # priority
+        priority = entry["priority"]
+        if priority not in _VALID_PRIORITIES:
+            return (
+                f"{label}: 'priority' must be one of "
+                f"{sorted(_VALID_PRIORITIES)}, got {priority!r}"
+            )
+
+        # ai_access
+        ai_access = entry["ai_access"]
+        if ai_access not in _VALID_AI_ACCESS:
+            return (
+                f"{label}: 'ai_access' must be one of "
+                f"{sorted(_VALID_AI_ACCESS)}, got {ai_access!r}"
+            )
+
+        # check: must be a string, single line, no shell operators
+        check = entry["check"]
+        if not isinstance(check, str):
+            return f"{label}: 'check' must be a string."
+        if _UNSAFE_CHECK_RE.search(check):
+            return (
+                f"{label}: 'check' contains a newline or shell operator "
+                f"(| & ; > < ` $()). Use a single command with no shell features."
+            )
+
+        # paths: non-empty list of strings
+        paths = entry["paths"]
+        if not isinstance(paths, list) or len(paths) == 0:
+            return f"{label}: 'paths' must be a non-empty list of strings."
+        for j, p in enumerate(paths):
+            if not isinstance(p, str):
+                return f"{label}: 'paths[{j}]' must be a string."
+
+    return ""
+
+
 def cmd_draft_rules(from_file: str) -> int:
-    """Phase 3 stub — watsonx rule drafting wired in Phase 3."""
+    """Read --from file, ask watsonx to propose countersign.yaml entries,
+    validate structure, and write countersign.proposed.yaml.
+
+    Never touches countersign.yaml or .countersign/approved_rules.sha256.
+    """
     wx_url = os.getenv("WATSONX_URL")
     wx_key = os.getenv("IBM_CLOUD_API_KEY")
     wx_proj = os.getenv("WATSONX_PROJECT_ID")
     if not all([wx_url, wx_key, wx_proj]):
         print(
-            "draft-rules requires IBM_CLOUD_API_KEY, WATSONX_URL, and WATSONX_PROJECT_ID "
-            "to be set. Skipping."
+            "draft-rules requires IBM_CLOUD_API_KEY, WATSONX_URL, and "
+            "WATSONX_PROJECT_ID to be set in the environment."
         )
-        return 0
-    print("draft-rules watsonx integration will be wired in Phase 3.")
+        return 1
+
+    src = Path(from_file)
+    if not src.exists():
+        print(f"draft-rules: file not found: {from_file}")
+        return 1
+
+    spec_text = src.read_text(encoding="utf-8")
+
+    # Collect existing rule IDs so the model doesn't reuse them
+    existing_ids: list[str] = []
+    if YAML_FILE.exists():
+        try:
+            existing_ids = [r["id"] for r in (yaml.safe_load(YAML_FILE.read_text(encoding="utf-8")) or [])]
+        except Exception:  # noqa: BLE001  # S110 — best-effort; absence of ids is safe
+            existing_ids = []
+
+    # Redact the spec before sending to watsonx
+    from wx_explain import _redact, draft_explain  # local import keeps it optional
+
+    spec_text = _redact(spec_text)
+
+    print(f"Sending {src.name} to watsonx for rule drafting…")
+    raw_yaml, model_id = draft_explain(spec_text, existing_ids=existing_ids)
+
+    if not raw_yaml.strip():
+        print(
+            "draft-rules: watsonx returned an empty response. "
+            "countersign.proposed.yaml was NOT written."
+        )
+        return 1
+
+    # Strip markdown code fences the model may have added
+    clean_yaml = _strip_fences(raw_yaml)
+
+    # Validate structure
+    try:
+        entries = yaml.safe_load(clean_yaml)
+    except yaml.YAMLError as exc:
+        print(f"draft-rules: watsonx output is not valid YAML.\n  {exc}")
+        print("countersign.proposed.yaml was NOT written.")
+        return 1
+
+    err = _validate_proposed(entries)
+    if err:
+        print(f"draft-rules: proposed YAML failed schema validation.\n  {err}")
+        print("countersign.proposed.yaml was NOT written.")
+        return 1
+
+    proposed_path = Path("countersign.proposed.yaml")
+    proposed_path.write_text(clean_yaml, encoding="utf-8")
+
+    if model_id:
+        print(f"  Model used: {model_id}")
+    print(f"  Written:    {proposed_path}")
+    print(
+        "\n  *** WARNING: check commands were written by AI and run as shell "
+        "commands.\n"
+        "  *** Read each one carefully before approving.\n"
+        "\n  Review countersign.proposed.yaml, then manually update\n"
+        "  countersign.yaml and run: python countersign.py approve-rules"
+    )
     return 0
 
 
