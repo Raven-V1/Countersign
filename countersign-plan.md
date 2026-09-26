@@ -393,9 +393,9 @@ _(ls result preferred over symlink per plan rule; use this absolute path in CSGN
 5. Parity tests: `demo_app/test_z_verify.py` (3 tests: PASS record, tampered JSON, BLOCKED). ✓
 
 **Relevant Context:**
-- `ZOS_USS_DIR=//z/z81854/countersign` in `.env` (double-slash required on Windows to
+- `ZOS_USS_DIR=//z/<zuser>/countersign` in `.env` (double-slash required on Windows to
   prevent Zowe from treating `/z/` as drive letter Z:).
-- USS dir: `/z/z81854/countersign` (created manually).
+- USS dir: `/z/<zuser>/countersign` (created manually).
 - VERIFY.jcl uses `$HOME/countersign` in shell commands (expands on USS).
 - All JCL lines ≤ 80 columns after `%%RECORD_NAME%%` substitution.
 - `write_record` and `_update_record_z` use `write_bytes` (LF only) to avoid CRLF
