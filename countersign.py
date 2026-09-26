@@ -9,6 +9,11 @@ Subcommands:
   verify-rules    Exit 0 if countersign.yaml matches approved hash, else exit 1.
   verify-chain    Walk records/ in timestamp order and verify SHA-256 chain; exit 0/1.
   draft-rules     (Phase 3) Read a file and ask watsonx to propose countersign.yaml entries.
+  init            Write starter countersign.yaml, baseline, hook, workflow in a repo root.
+  dashboard       Run the Streamlit dashboard on records/ in the current directory.
+
+Z approval is opt-in: it runs only when ZOS_USS_DIR is set (or is required via
+COUNTERSIGN_REQUIRE_Z=1); otherwise records get z_status=not_configured.
 
 Hard rules (enforced by project):
   - Never call approve-rules from an AI agent.
@@ -28,12 +33,16 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from importlib import resources
+from importlib import util as importlib_util
 from pathlib import Path
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv()
+# Look for .env from the working directory (the repo being gated), not from
+# wherever this module is installed.
+load_dotenv(find_dotenv(usecwd=True))
 
 YAML_FILE = Path("countersign.yaml")
 RECORDS_DIR = Path("records")
@@ -337,6 +346,15 @@ _ZOS_VERIFY_JCL = Path("zos") / "VERIFY.jcl"
 _ZOS_VERIFY_PY = Path("zos") / "verify_record.py"
 
 
+def _z_configured() -> bool:
+    """True when Z approval should run: ZOS_USS_DIR is set, or Z is required.
+
+    COUNTERSIGN_REQUIRE_Z=1 with ZOS_USS_DIR unset still counts as configured,
+    so _run_z_approval reports it unavailable and the commit is blocked.
+    """
+    return bool(os.getenv("ZOS_USS_DIR", "").strip()) or os.getenv("COUNTERSIGN_REQUIRE_Z") == "1"
+
+
 def _update_record_z(
     path: Path,
     z_status: str,
@@ -550,12 +568,20 @@ def cmd_run(skip_z: bool) -> int:
 
     # 5. Determine initial Z status; write record with it.
     ci_mode = os.getenv("CI", "").lower() in ("true", "1", "yes")
+    z_configured = _z_configured()
     if ci_mode:
         initial_z_status: str = "skipped_ci"
     elif skip_z:
         initial_z_status = "skipped_by_human"
+    elif not z_configured:
+        initial_z_status = "not_configured"
+        print(
+            "  Z approval: not configured (ZOS_USS_DIR unset) — skipped, "
+            "recorded as z_status=not_configured."
+        )
     else:
         initial_z_status = None
+    run_z = not ci_mode and not skip_z and z_configured
 
     record_path = write_record(results, outcome, initial_z_status, None, None, None, wx_model_id, wx_error)
     print_summary(rules, results, record_path)
@@ -572,15 +598,15 @@ def cmd_run(skip_z: bool) -> int:
             if plain:
                 print(f"        → {plain}")
             print()
-        if not ci_mode and not skip_z:
+        if run_z:
             # Still run Z so BLOCKED records are audited; Z will also reject them.
             z_status_final, z_job_id, z_rc, z_verified_hash = _run_z_approval(record_path)
             _update_record_z(record_path, z_status_final, z_job_id, z_rc, z_verified_hash)
         return 1
 
-    # 6. Z approval (non-CI, non-skipped only)
+    # 6. Z approval (non-CI, non-skipped, configured or required only)
     z_blocked = False
-    if not ci_mode and not skip_z:
+    if run_z:
         z_status_final, z_job_id, z_rc, z_verified_hash = _run_z_approval(record_path)
         _update_record_z(record_path, z_status_final, z_job_id, z_rc, z_verified_hash)
         if z_status_final in ("blocked_by_z", "unavailable"):
@@ -1068,6 +1094,166 @@ def cmd_z_audit() -> int:
 
 
 # ---------------------------------------------------------------------------
+# init / dashboard
+# ---------------------------------------------------------------------------
+
+_HOOK_MARKER = b"countersign"
+
+
+def _resource_bytes(package: str, name: str, repo_dir: str) -> bytes:
+    """Read a packaged data file; fall back to the repo layout when not installed."""
+    try:
+        data = (resources.files(package) / name).read_bytes()
+    except ModuleNotFoundError:
+        data = (Path(__file__).resolve().parent / repo_dir / name).read_bytes()
+    # A Windows checkout may have converted templates to CRLF; hooks, YAML and
+    # JCL are always written LF.
+    return data.replace(b"\r\n", b"\n")
+
+
+def _write_file(path: Path, data: bytes, force: bool) -> str:
+    """Write data to path unless it exists and force is False. Return the status."""
+    existed = path.exists()
+    if existed and not force:
+        return "skipped (exists; --force to overwrite)"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return "overwritten" if existed else "created"
+
+
+def _leak_baseline() -> bytes | None:
+    """Run detect-secrets scan (git-tracked files) and return the baseline JSON."""
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "detect_secrets", "scan",
+            "--exclude-files", "^records", "--exclude-files", "^.countersign",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        err = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        print(f"  detect-secrets scan failed (rc={result.returncode}): {err[:300]}")
+        return None
+    return result.stdout.replace(b"\r\n", b"\n")
+
+
+def cmd_init(force: bool, with_z: bool) -> int:
+    """Write starter Countersign files into the current git repo root.
+
+    Never runs approve-rules: approving countersign.yaml is the human's step.
+    """
+    rc, top = _run("git rev-parse --show-toplevel")
+    if rc != 0 or not top or not os.path.samefile(top, os.getcwd()):
+        print(
+            "countersign init: run this from the root of a git repository "
+            "(`git rev-parse --show-toplevel` must be the current directory)."
+        )
+        return 1
+
+    print("Countersign init:\n")
+    report: list[tuple[str, str]] = []
+
+    def put(path: Path, data: bytes) -> None:
+        report.append((path.as_posix(), _write_file(path, data, force)))
+
+    put(YAML_FILE, _resource_bytes("countersign_templates", "countersign.yaml", "countersign_templates"))
+
+    baseline = Path(".leak-baseline.json")
+    if baseline.exists() and not force:
+        report.append((baseline.as_posix(), "skipped (exists; --force to overwrite)"))
+    else:
+        data = _leak_baseline()
+        if data is None:
+            report.append((baseline.as_posix(), "FAILED (detect-secrets scan)"))
+        else:
+            put(baseline, data)
+
+    _, hook_rel = _run("git rev-parse --git-path hooks/pre-commit")
+    hook = Path(hook_rel)
+    hook_refused = False
+    if hook.exists() and not force and _HOOK_MARKER not in hook.read_bytes().lower():
+        hook_refused = True
+        report.append((hook.as_posix(), "REFUSED (existing non-Countersign hook; --force to replace)"))
+    else:
+        put(hook, _resource_bytes("countersign_templates", "pre-commit", "countersign_templates"))
+        hook.chmod(hook.stat().st_mode | 0o111)
+
+    put(
+        Path(".github") / "workflows" / "countersign.yml",
+        _resource_bytes("countersign_templates", "countersign.yml", "countersign_templates"),
+    )
+    put(RECORDS_DIR / ".gitkeep", b"")
+
+    if with_z:
+        for name in ("VERIFY.jcl", "verify_record.py"):
+            put(Path("zos") / name, _resource_bytes("countersign_zos", name, "zos"))
+
+    width = max(len(p) for p, _ in report)
+    for path_str, status in report:
+        print(f"  {path_str:<{width}}  {status}")
+
+    if with_z:
+        print(
+            "\n  Z: set ZOS_USS_DIR in .env to the USS directory VERIFY.jcl reads\n"
+            "     ($HOME/countersign), and set the Python path (PY=...) in\n"
+            "     zos/VERIFY.jcl to your z/OS Python. Until ZOS_USS_DIR is set,\n"
+            "     records get z_status=not_configured."
+        )
+
+    failed = hook_refused or any(s.startswith("FAILED") for _, s in report)
+    if failed:
+        print("\n  Countersign is NOT fully installed — fix the items above and rerun.")
+        return 1
+
+    print(
+        "\nNext steps:\n"
+        "  1. Edit countersign.yaml (set FUNC-001 to your test command), then approve it yourself:\n"
+        "       python -m countersign approve-rules\n"
+        "  2. Stage the Countersign files:\n"
+        "       git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep\n"
+        "  3. Commit; the pre-commit hook gates this and every later commit:\n"
+        '       git commit -m "Add Countersign"'
+    )
+    return 0
+
+
+def cmd_dashboard() -> int:
+    """Run the packaged Streamlit dashboard against records/ in the cwd."""
+    missing = [m for m in ("streamlit", "pandas") if importlib_util.find_spec(m) is None]
+    if missing:
+        print(
+            f"countersign dashboard: {', '.join(missing)} not installed. Install the dashboard extra:\n"
+            '  pip install "countersign[dashboard] @ git+https://github.com/Raven-V1/Countersign"'
+        )
+        return 1
+
+    try:
+        app_ref = resources.files("countersign_dashboard") / "app.py"
+    except ModuleNotFoundError:
+        app_ref = Path(__file__).resolve().parent / "dashboard" / "app.py"
+
+    cmd = [sys.executable, "-m", "streamlit", "run"]
+    theme = []
+    if not Path(".streamlit", "config.toml").exists():
+        theme = [
+            "--theme.base", "dark",
+            "--theme.primaryColor", "#0f62fe",
+            "--theme.backgroundColor", "#161616",
+            "--theme.secondaryBackgroundColor", "#262626",
+            "--theme.textColor", "#f4f4f4",
+        ]
+    # The dashboard calls verify-chain; outside this repo there is no
+    # countersign.py in the cwd, so it must go through the installed module.
+    env = {**os.environ, "COUNTERSIGN_VERIFY_VIA_MODULE": "1"}
+    with resources.as_file(app_ref) as app_path:
+        try:
+            return subprocess.call([*cmd, str(app_path), *theme], env=env)
+        except KeyboardInterrupt:
+            return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1107,6 +1293,11 @@ def main() -> None:
     draft_p = sub.add_parser("draft-rules", help="Ask watsonx to draft rules from a spec file.")
     draft_p.add_argument("--from", dest="from_file", required=True, help="Source spec file.")
 
+    init_p = sub.add_parser("init", help="Write starter Countersign files into this git repo root.")
+    init_p.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    init_p.add_argument("--z", dest="with_z", action="store_true", help="Also write zos/ IBM Z files.")
+    sub.add_parser("dashboard", help="Run the Streamlit dashboard on records/ in this directory.")
+
     args = parser.parse_args()
 
     if args.command in GATE_COMMANDS and os.environ.get(IN_CHECK_ENV) == "1":
@@ -1133,6 +1324,10 @@ def main() -> None:
         sys.exit(cmd_z_audit())
     elif args.command == "draft-rules":
         sys.exit(cmd_draft_rules(args.from_file))
+    elif args.command == "init":
+        sys.exit(cmd_init(force=args.force, with_z=args.with_z))
+    elif args.command == "dashboard":
+        sys.exit(cmd_dashboard())
     else:
         parser.print_help()
         sys.exit(1)

@@ -18,3 +18,6 @@ records/*.json             binary
 # z/OS artefacts -- keep LF so USS Python and BPXBATCH see consistent bytes.
 zos/*.jcl                  text eol=lf
 zos/*.py                   text eol=lf
+
+# Starter templates written by `countersign init` stay LF.
+countersign_templates/*    text eol=lf

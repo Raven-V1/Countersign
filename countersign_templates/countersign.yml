@@ -1,0 +1,61 @@
+name: Countersign Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  countersign:
+    name: Countersign checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          pip install git+https://github.com/Raven-V1/Countersign
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Compute changed files
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Base SHA is zeros/empty — ci will scan all tracked files"
+          else
+            {
+              echo "CS_CHANGED_FILES<<EOF"
+              git diff --name-only "$BASE" "${{ github.sha }}"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Run Countersign CI gate
+        run: python -m countersign ci
+
+      - name: Step summary
+        if: always()
+        run: |
+          echo "### Countersign CI Gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**IBM Z approval** runs locally only — Zowe requires a z/OS" \
+               "connection that is not available in CI. The Z step is skipped" \
+               "here by design." >> "$GITHUB_STEP_SUMMARY"

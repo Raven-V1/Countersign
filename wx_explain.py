@@ -33,9 +33,9 @@ import re
 import threading
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 # ---------------------------------------------------------------------------
 # Model selection

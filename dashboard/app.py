@@ -186,13 +186,21 @@ def _first_error_line(output: str) -> str:
 def run_verify_chain() -> tuple[str, str]:
     """Run `countersign.py verify-chain`; return (status, message).
 
+    Launched by `python -m countersign dashboard` (COUNTERSIGN_VERIFY_VIA_MODULE=1)
+    the cwd is the user's repo, which has no countersign.py, so the installed
+    module is used instead.
+
     status is PASS, FAIL, or UNVERIFIED. FAIL only when verify-chain ran and
     reported a broken chain; if it could not run there is no evidence, so the
     status is UNVERIFIED, never FAIL.
     """
     try:
+        if os.environ.get("COUNTERSIGN_VERIFY_VIA_MODULE") == "1":
+            cmd = [sys.executable, "-m", "countersign", "verify-chain"]
+        else:
+            cmd = [sys.executable, "countersign.py", "verify-chain"]
         result = subprocess.run(
-            [sys.executable, "countersign.py", "verify-chain"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=15,
@@ -226,6 +234,7 @@ def fmt_timestamp(ts: str) -> str:
 _Z_STATUS_LABELS: dict[str, str] = {
     "skipped_by_human": "Skipped by user",
     "not_implemented":  "Not configured",
+    "not_configured":   "Not configured",
     "approved":         "Approved",
     "unavailable":      "Unavailable",
 }
@@ -385,7 +394,7 @@ rules   = load_rules(str(RULES_FILE))
 st.subheader("Run Timeline")
 
 if not records:
-    st.info("No records found. Run `python countersign.py run` to create the first record.")
+    st.info("No records found. Run `python -m countersign run` to create the first record.")
     st.stop()
 
 def _outcome_label(rec: dict, priority_map: dict[str, str]) -> str:

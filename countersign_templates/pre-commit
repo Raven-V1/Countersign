@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Countersign pre-commit hook (installed by `python -m countersign init`).
+#
+# Runs `python -m countersign run`.
+# Exit code is forwarded to git: non-zero blocks the commit.
+#
+# Set COUNTERSIGN_SKIP_Z=1 to pass --skip-z (records z_status=skipped_by_human).
+# Example: COUNTERSIGN_SKIP_Z=1 git commit -m "..."
+
+set -e
+
+PY=python
+if ! command -v "$PY" >/dev/null 2>&1; then
+    PY=python3
+fi
+
+if [ "${COUNTERSIGN_SKIP_Z:-0}" = "1" ]; then
+    exec "$PY" -m countersign run --skip-z
+else
+    exec "$PY" -m countersign run
+fi

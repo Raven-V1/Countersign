@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "countersign"
+version = "0.1.0"
+description = "Change-control gate: deterministic checks, hash-chained evidence records, optional IBM Z approval."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "bandit>=1.7",
+    "detect-secrets>=1.4",
+    "ruff>=0.4",
+]
+
+[project.optional-dependencies]
+watsonx = ["ibm-watsonx-ai>=1.0"]
+dashboard = ["streamlit>=1.35", "pandas>=2.0"]
+
+[project.scripts]
+countersign = "countersign:main"
+
+[tool.setuptools]
+py-modules = ["countersign", "wx_explain"]
+# dashboard/ and zos/ ship under prefixed names so the installed tree does not
+# claim generic top-level names; the repo layout stays as it is.
+packages = ["countersign_templates", "countersign_dashboard", "countersign_zos"]
+
+[tool.setuptools.package-dir]
+countersign_dashboard = "dashboard"
+countersign_zos = "zos"
+
+[tool.setuptools.package-data]
+countersign_templates = ["countersign.yaml", "countersign.yml", "pre-commit"]
+countersign_dashboard = ["app.py"]
+countersign_zos = ["VERIFY.jcl", "verify_record.py"]

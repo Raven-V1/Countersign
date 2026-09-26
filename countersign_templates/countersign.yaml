@@ -1,0 +1,74 @@
+# ============================================================
+# countersign.yaml — this repository's Countersign rules.
+# Human-owned. After every edit, a human runs:
+#   python -m countersign approve-rules
+# Until then SEC-003 fails and every commit is blocked.
+# ============================================================
+#
+# Schema per entry:
+#   id:           unique string (PREFIX-NNN); security rule ids start with SEC-
+#   requirement:  plain-language description
+#   priority:     security | functional | quality
+#   check:        command to run; exit 0 = PASS (empty string = always UNVERIFIED)
+#                 one command, no shell features (| & ; > < ` $())
+#   paths:        list of glob patterns this rule watches
+#   ai_access:    none | read | edit
+#   protect:      true = changes to this file require approve-rules
+#
+# Gate rule enforced by countersign:
+#   security FAIL or UNVERIFIED  -> commit BLOCKED
+#   functional FAIL              -> commit BLOCKED
+#   quality FAIL                 -> warning only, commit proceeds
+#
+# A rule with an empty check is UNVERIFIED -- never PASS.
+# ============================================================
+
+- id: SEC-001
+  requirement: No medium or high severity issues found by bandit in Python code
+  priority: security
+  check: "python -m bandit -r . --exclude ./.venv,./venv,./env,./build -ll -q"
+  paths:
+    - "**/*.py"
+  ai_access: read
+
+- id: SEC-002
+  requirement: No high-entropy strings or known key patterns in staged files
+  priority: security
+  check: 'python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign'
+  paths:
+    - "**/*"
+  ai_access: read
+
+- id: SEC-003
+  requirement: countersign.yaml has not been silently modified since last approval
+  priority: security
+  check: "python -m countersign verify-rules"
+  paths:
+    - "countersign.yaml"
+  ai_access: none
+  protect: true
+
+- id: SEC-004
+  requirement: Evidence record chain is intact (no record has been tampered with)
+  priority: security
+  check: "python -m countersign verify-chain"
+  paths:
+    - "records/*.json"
+  ai_access: none
+
+- id: FUNC-001
+  requirement: The test suite passes
+  priority: functional
+  # replace with your test command, e.g. "python -m pytest -q"
+  check: ""
+  paths:
+    - "**/*"
+  ai_access: edit
+
+- id: QUAL-001
+  requirement: Python source files pass ruff style checks
+  priority: quality
+  check: "python -m ruff check ."
+  paths:
+    - "**/*.py"
+  ai_access: edit

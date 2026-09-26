@@ -94,34 +94,52 @@ COUNTERSIGN_SKIP_Z=1 git commit -m "..."
 ```
 
 Other commands: `verify-rules`, `approve-rules` (human only),
-`draft-rules --from <file>`, and `ci`. The dashboard runs with
-`streamlit run dashboard/app.py`.
+`draft-rules --from <file>`, `ci`, and `init`. The dashboard runs with
+`python countersign.py dashboard` (or `streamlit run dashboard/app.py`).
 
 ## Use Countersign in your own repo
 
-1. Copy `countersign.py`, `wx_explain.py`, `hooks/pre-commit`, `scripts/`,
-   `requirements.txt`, and `.github/workflows/countersign.yml`.
-2. Write your own `countersign.yaml`: a list of rules, each with `id`,
-   `requirement`, `priority` (`security`, `functional`, `quality`), `check`
-   (a shell command; exit 0 is PASS), `paths` (globs), and `ai_access`
-   (`none`, `read`, `edit`). Then run `python countersign.py approve-rules`
-   yourself.
-3. watsonx is optional. Set `IBM_CLOUD_API_KEY`, `WATSONX_URL`, and
-   `WATSONX_PROJECT_ID` in `.env`; without them, FAIL explanations are
-   skipped and the gate still works.
-4. Z is optional. To use it, set up your own Zowe profile, set `ZOS_USS_DIR`
-   to the USS directory the job reads (`$HOME/countersign`), and update the
-   Python path in `zos/VERIFY.jcl`. Otherwise run with `--skip-z`.
-5. Dashboard: deploy your fork on Streamlit Community Cloud with main file
-   `dashboard/app.py`.
+```sh
+pip install git+https://github.com/Raven-V1/Countersign
+cd your-repo                        # must be the git repo root
+python -m countersign init          # writes the files below; never approves
+python -m countersign approve-rules # you do this, after reading countersign.yaml
+git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep
+git commit -m "Add Countersign"     # the hook gates this and every later commit
+```
+
+`init` writes a starter `countersign.yaml` (bandit, detect-secrets, rules
+approval, record chain, an empty FUNC-001 for your test command, ruff), a
+`.leak-baseline.json` from `detect-secrets scan`, the pre-commit hook, a
+GitHub Action that installs Countersign from this repo and runs
+`python -m countersign ci`, and `records/.gitkeep`. Existing files are
+skipped unless you pass `--force`; an existing pre-commit hook that is not
+Countersign's is never replaced without `--force`.
+
+- **FUNC-001** starts with an empty check, so it is UNVERIFIED until you set
+  it to your test command (e.g. `python -m pytest -q`) and re-approve.
+- **watsonx** is optional: `pip install "countersign[watsonx] @ git+https://github.com/Raven-V1/Countersign"`
+  and set `IBM_CLOUD_API_KEY`, `WATSONX_URL`, and `WATSONX_PROJECT_ID` in
+  `.env`. Without them, FAIL explanations are skipped and the gate still works.
+- **IBM Z** is opt-in. Without `ZOS_USS_DIR`, runs record
+  `z_status=not_configured` and are not blocked. `python -m countersign init --z`
+  adds `zos/VERIFY.jcl` and `zos/verify_record.py`; set your Zowe profile,
+  `ZOS_USS_DIR` (the USS directory the job reads, `$HOME/countersign`), and
+  the Python path in `zos/VERIFY.jcl`. Once `ZOS_USS_DIR` is set, an
+  unreachable Z blocks the commit; `COUNTERSIGN_REQUIRE_Z=1` blocks even when
+  `ZOS_USS_DIR` is missing.
+- **Dashboard**: `pip install "countersign[dashboard] @ git+https://github.com/Raven-V1/Countersign"`,
+  then `python -m countersign dashboard` from the repo root.
 
 Settings live in `countersign.yaml`, not in the dashboard, on purpose: a
 settings UI would bypass the `approve-rules` human gate.
 
-Rough edges: it is not a pip package; the hook install script is PowerShell
-(the POSIX one-liner is in Quickstart); the Z verifier identifies security
-rules by the `SEC-` prefix, so security rule ids must start with it; DEMO-001
-is specific to the demo app and should be dropped.
+Rough edges: tested on Python 3.14 only (Windows locally, Ubuntu in CI); the
+Z verifier identifies security rules by the `SEC-` prefix, so security rule
+ids must start with it; with `core.autocrlf=true` on Windows, mark
+`countersign.yaml`, `records/*.json`, `.countersign/*`, and
+`.leak-baseline.json` in `.gitattributes` (see this repo's) so checkouts do
+not change the hashed bytes.
 
 ## How Bob was used
 

@@ -125,3 +125,5 @@ ruff-cache/
 bob_sessions/*.json
 # Claude Code local settings
 .claude/
+# pip install . (in-tree build output)
+*.egg-info/
