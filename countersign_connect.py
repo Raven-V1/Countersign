@@ -239,10 +239,17 @@ def error_source(label: str, message: str) -> dict:
     return {"label": label, "chain": None, "records": [], "rules": None, "error": message}
 
 
+def empty_source(label: str) -> dict:
+    """Repo downloaded fine but has no records: not adopted yet, not a load failure."""
+    return {"label": label, "chain": None, "records": [], "rules": None, "error": None, "empty": True}
+
+
 def load_github(owner: str, repo: str, branch: str) -> dict:
     label = f"{owner}/{repo}@{branch}"
     try:
         records, rules = extract_zip(fetch_zip(owner, repo, branch))
+        if not records:
+            return empty_source(label)
         return build_source(label, records, rules)
     except LoadError as exc:
         return error_source(label, str(exc))

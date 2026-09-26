@@ -8,6 +8,8 @@ Covers:
   ZOPT-3. COUNTERSIGN_REQUIRE_Z=1, ZOS_USS_DIR unset -> unavailable, blocked.
   ZOPT-4. Dashboard renders z_status not_configured as "Not configured", and
           uses `-m countersign` when launched by `countersign dashboard`.
+  ZOPT-5. The Z user in ZOS_USS_DIR is printed as <zuser> by run and z-audit;
+          Zowe calls still use the real path.
 
 Checks, watsonx, and Zowe are all stubbed; runs in an empty tmp dir.
 """
@@ -76,6 +78,43 @@ def test_set_and_unreachable_blocks(tmp_path, zowe_calls, monkeypatch):
     assert countersign.cmd_run(skip_z=False) == 1
     assert _record(tmp_path)["z_status"] == "unavailable"
     assert zowe_calls  # Z was attempted
+
+
+@pytest.mark.parametrize(
+    ("real", "shown"),
+    [
+        ("//z/IBMUSER/countersign", "//z/<zuser>/countersign"),
+        ("/u/someone/countersign", "/u/<zuser>/countersign"),
+        ("/u/someone/countersign/approved.log", "/u/<zuser>/countersign/approved.log"),
+        ("/u/someone", "/u/<zuser>"),
+        ("countersign", "countersign"),
+    ],
+)
+def test_mask_uss_dir(real, shown):
+    assert countersign.mask_uss_dir(real) == shown
+
+
+def test_run_and_z_audit_mask_user(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ZOS_USS_DIR", "//z/SECRETU/countersign")
+    zowe_args: list[list[str]] = []
+
+    def _fail(args, timeout=30):
+        zowe_args.append(args)
+        return 1, "upload to //z/SECRETU/countersign/x failed"
+
+    monkeypatch.setattr(countersign, "_zowe", _fail)
+    rec = tmp_path / "r.json"
+    rec.write_text("{}", encoding="utf-8")
+    assert countersign._run_z_approval(rec)[0] == "unavailable"
+    assert countersign.cmd_z_audit() == 1
+    out = capsys.readouterr().out
+    assert "SECRETU" not in out
+    assert "//z/<zuser>/countersign" in out
+    assert "//z/<zuser>/countersign/approved.log" in out
+    # Zowe itself still gets the real path.
+    assert any("//z/SECRETU/countersign/verify_record.py" in a for a in zowe_args[0])
+    assert "//z/SECRETU/countersign/approved.log" in zowe_args[1]
 
 
 def test_required_but_unset_blocks(tmp_path, zowe_calls, monkeypatch):

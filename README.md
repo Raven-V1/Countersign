@@ -162,6 +162,16 @@ Rough edges: tested on Python 3.14 only (Windows locally, Ubuntu in CI); the
 Z verifier identifies security rules by the `SEC-` prefix, so security rule
 ids must start with it.
 
+### Adopting on an existing repo
+
+`init` works on any existing repo, and the gate protects every commit from
+then on. History before adoption has no records and the dashboard shows it
+that way on purpose: no evidence, no pass. The first gated commit runs bandit
+and ruff over the whole codebase, so record #1 is a baseline of the current
+state. If `init` warns that potential secrets were recorded in
+`.leak-baseline.json`, review them with `python -m detect_secrets audit
+.leak-baseline.json` before approving; anything real must be removed and rotated.
+
 ## How Bob was used
 
 Phases 0 to 3 (rules file and plan, core engine and hook, dashboard, watsonx
@@ -187,6 +197,10 @@ and CI.
   commit leaves its record for the next commit to include.
 - **Z approval is local-only.** CI has no connection to z/OS. CI re-runs the
   checks and the gate, but it does not re-verify on Z.
+
+## Roadmap
+
+- Dashboard "quick scan" preview: static bandit + detect-secrets on a connected repo, labeled as not evidence.
 
 ## Caught by its own gate
 

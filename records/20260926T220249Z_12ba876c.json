@@ -1,0 +1,77 @@
+{
+  "timestamp": "20260926T220249Z",
+  "git_hash": "77ac23c9313b95a07d333b55998cb06fd18366fe",
+  "prev_record_fingerprint": "628dbe5652d3591f22331ba2a4618df61705f65e82fc94b34ab11f5a29d4986d",
+  "outcome": "PASS",
+  "z_status": "approved",
+  "z_job_id": "JOB02702",
+  "z_rc": 0,
+  "z_verified_hash": "776fb000937edc356fbbfbf818778aea49e563d13fe47a5b792fd3723cbe1747",
+  "wx_model_id": "",
+  "wx_error": "",
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "PASS",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 49 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": ".........................................................s.............. [ 62%]\n............................................                             [100%]\n115 passed, 1 skipped in 15.87s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "BOB-001",
+      "status": "PASS",
+      "check": "python scripts/generate_bob_rules.py --check",
+      "output": "OK:          .bob\\rules\\countersign.md\nOK:          .bobignore",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "PASS",
+      "check": "python -m ruff check .",
+      "output": "All checks passed!",
+      "plain_english": ""
+    }
+  ]
+}

@@ -8,7 +8,9 @@ Covers:
   CON-3. Tampered record -> FAIL ("Chain broken") notice.
   CON-4. Invalid owner/repo and a "../" branch are rejected without any fetch.
   CON-5. Oversize download, too many record files, and a >1 MB record are rejected.
-  CON-6. HTTP 404 -> grey UNVERIFIED notice, never "Chain broken".
+  CON-6. HTTP 404, bad zip, timeout -> grey UNVERIFIED "could not load" notice,
+         never "Chain broken"; zero records -> grey "Connected: no Countersign
+         records" notice instead.
   CON-7. plain_english with markdown link/image syntax renders as literal text.
   CON-8. Uploads use the same verify path; Disconnect returns to the default view.
 
@@ -299,12 +301,38 @@ def test_404_shows_unverified(app, monkeypatch):
     assert "Chain broken" not in notice
 
 
-def test_no_records_shows_unverified(app):
+def test_zero_records_is_connected_not_load_failure(app):
     at, _, use_zip = app
     use_zip(_zip([]))
     _connect(at, "owner/repo")
     (notice,) = _notices(at)
-    assert "cs-notif--unverified" in notice and "No records found" in notice
+    assert "cs-notif--unverified" in notice  # grey
+    assert "Connected: no Countersign records in owner/repo@main" in notice
+    assert "could not load" not in notice and "Chain" not in notice
+    assert "hasn&#x27;t been set up with Countersign yet" in notice
+    assert "python -m countersign init" in notice
+    assert "<code>" not in notice.split("cs-notif-msg", 1)[1]  # plain text body
+    assert not at.dataframe
+
+
+@pytest.mark.parametrize(
+    ("data", "exc", "expect"),
+    [
+        (b"not a zip", None, "not a valid zip"),
+        (None, TimeoutError(), "timed out"),
+    ],
+)
+def test_load_failures_still_unverified(app, monkeypatch, data, exc, expect):
+    at, _, use_zip = app
+    if data is not None:
+        use_zip(data)
+    else:
+        _opener(monkeypatch, exc=exc)
+    _connect(at, "owner/repo")
+    (notice,) = _notices(at)
+    assert "cs-notif--unverified" in notice
+    assert "UNVERIFIED: could not load owner/repo@main" in notice and expect in notice
+    assert "Connected:" not in notice
 
 
 # ---------------------------------------------------------------------------

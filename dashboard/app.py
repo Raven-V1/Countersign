@@ -133,7 +133,7 @@ div[data-testid="stAlert"],
 .cs-notif svg {{ flex-shrink: 0; margin-top: 1px; }}
 .cs-notif-body {{ display: flex; flex-direction: column; gap: 2px; }}
 .cs-notif-title {{ font-weight: 600; }}
-.cs-notif-msg   {{ font-size: 13px; opacity: 0.85; }}
+.cs-notif-msg   {{ font-size: 13px; opacity: 0.85; white-space: pre-line; }}
 
 /* Mono font for IDs, hashes, job IDs */
 code, .stCode, pre,
@@ -574,6 +574,13 @@ _SOURCE_KEY = "cs_source"
 _VIEW_KEY = "cs_view"
 _SEL_KEY = "cs_sel"          # last timeline selection: {"src", "file", "state"}
 _RESTORE_KEY = "cs_restore_sel"
+_NOT_ADOPTED_MSG = (
+    "This repo hasn't been set up with Countersign yet. History before\n"
+    "adoption has no evidence, so nothing is shown as verified. To start:\n"
+    "pip install git+https://github.com/Raven-V1/Countersign\n"
+    "python -m countersign init\n"
+    "then commit and push; records will appear here."
+)
 
 with st.sidebar:
     st.header("Connect a repo")
@@ -636,6 +643,12 @@ else:
     if source["error"]:
         st.html(_notif_html(
             "UNVERIFIED", source["error"], title=f"UNVERIFIED: could not load {source['label']}"
+        ))
+        st.stop()
+    if source.get("empty"):
+        st.html(_notif_html(
+            "UNVERIFIED", _NOT_ADOPTED_MSG,
+            title=f"Connected: no Countersign records in {source['label']}",
         ))
         st.stop()
     chain_status, chain_msg = source["chain"]

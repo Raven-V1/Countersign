@@ -57,7 +57,4 @@ jobs:
         run: |
           echo "### Countersign CI Gate" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**IBM Z approval** runs locally only — Zowe requires a z/OS" \
-               "connection that is not available in CI. The Z step is skipped" \
-               "here by design; every commit that reaches \`main\` was already" \
-               "Z-approved locally before push." >> "$GITHUB_STEP_SUMMARY"
+          echo "**IBM Z approval runs locally and is opt-in.** CI re-runs the same checks; Z status for each commit is in its record." >> "$GITHUB_STEP_SUMMARY"

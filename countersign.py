@@ -355,6 +355,20 @@ def _z_configured() -> bool:
     return bool(os.getenv("ZOS_USS_DIR", "").strip()) or os.getenv("COUNTERSIGN_REQUIRE_Z") == "1"
 
 
+def mask_uss_dir(uss_dir: str) -> str:
+    """USS path for printing: the user segment becomes <zuser>.
+
+    //z/IBMUSER/countersign -> //z/<zuser>/countersign; /u/ibmuser/x -> /u/<zuser>/x.
+    Printout only; Zowe calls still use the real path.
+    """
+    return re.sub(r"^(/+[^/]+/)[^/]+", r"\g<1><zuser>", uss_dir)
+
+
+def _masked(text: str, uss_dir: str) -> str:
+    """Replace the real USS dir in Zowe output with its masked form."""
+    return text.replace(uss_dir, mask_uss_dir(uss_dir)) if uss_dir else text
+
+
 def _update_record_z(
     path: Path,
     z_status: str,
@@ -423,7 +437,7 @@ def _run_z_approval(
     # Capture the record hash before any Z fields are written back.
     expected_hash = sha256_file(record_path)
 
-    print(f"  Z approval: uploading to {uss_dir} …")
+    print(f"  Z approval: uploading to {mask_uss_dir(uss_dir)} …")
 
     # Upload verify_record.py
     rc, out = _zowe([
@@ -432,7 +446,7 @@ def _run_z_approval(
         "--binary",
     ])
     if rc != 0:
-        print(f"  Z upload failed (verify_record.py): {out[:200]}")
+        print(f"  Z upload failed (verify_record.py): {_masked(out, uss_dir)[:200]}")
         return "unavailable", None, None, None
 
     # Upload the evidence record
@@ -443,7 +457,7 @@ def _run_z_approval(
         "--binary",
     ])
     if rc != 0:
-        print(f"  Z upload failed ({record_name}): {out[:200]}")
+        print(f"  Z upload failed ({record_name}): {_masked(out, uss_dir)[:200]}")
         return "unavailable", None, None, None
 
     # Generate temp JCL from template; substitute both name and hash placeholders.
@@ -493,11 +507,11 @@ def _run_z_approval(
         else:
             z_rc_val = None
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
-        print(f"  Z approval: could not parse Zowe response ({exc}); raw: {out[:300]}")
+        print(f"  Z approval: could not parse Zowe response ({exc}); raw: {_masked(out, uss_dir)[:300]}")
         return "unavailable", z_job_id, None, None
 
     if z_rc_val is None:
-        print(f"  Z approval: unexpected retcode in response: {out[:200]}")
+        print(f"  Z approval: unexpected retcode in response: {_masked(out, uss_dir)[:200]}")
         return "unavailable", z_job_id, None, None
 
     if z_rc_val == 0:
@@ -1074,7 +1088,7 @@ def cmd_z_audit() -> int:
         return 1
 
     log_remote = f"{uss_dir}/approved.log"
-    print(f"z-audit: downloading {log_remote} …")
+    print(f"z-audit: downloading {mask_uss_dir(log_remote)} …")
 
     # mkstemp creates the file; Zowe skips downloads when the target already
     # exists.  Remove it immediately so Zowe can write it.
@@ -1087,7 +1101,7 @@ def cmd_z_audit() -> int:
             "--file", tmp_path, "--binary",
         ])
         if rc != 0:
-            print(f"z-audit: could not download approved.log ({out[:200]})")
+            print(f"z-audit: could not download approved.log ({_masked(out, uss_dir)[:200]})")
             return 1
 
         try:
@@ -1191,6 +1205,33 @@ def _leak_baseline() -> bytes | None:
     return result.stdout.replace(b"\r\n", b"\n")
 
 
+def baseline_findings(data: bytes) -> list[tuple[str, int]]:
+    """(file, line) for each finding in a detect-secrets baseline; never the values."""
+    try:
+        results = json.loads(data.decode("utf-8")).get("results") or {}
+    except (UnicodeDecodeError, ValueError, AttributeError):
+        return []
+    return sorted(
+        (str(fname), int(f.get("line_number") or 0))
+        for fname, items in results.items()
+        for f in items
+        if isinstance(f, dict)
+    )
+
+
+def print_baseline_warning(findings: list[tuple[str, int]]) -> None:
+    if not findings:
+        return
+    print(
+        f"\nWARNING: {len(findings)} potential secret(s) already in this repo were recorded\n"
+        "in .leak-baseline.json as known, so SEC-002 will not flag them.\n"
+        "Review before approving: python -m detect_secrets audit .leak-baseline.json\n"
+        "Anything real must be removed and rotated."
+    )
+    for fname, line in findings:
+        print(f"  {fname}:{line}")
+
+
 def cmd_init(force: bool, with_z: bool) -> int:
     """Write starter Countersign files into the current git repo root.
 
@@ -1213,6 +1254,7 @@ def cmd_init(force: bool, with_z: bool) -> int:
     put(YAML_FILE, _resource_bytes("countersign_templates", "countersign.yaml", "countersign_templates"))
 
     baseline = Path(".leak-baseline.json")
+    findings: list[tuple[str, int]] = []
     if baseline.exists() and not force:
         report.append((baseline.as_posix(), "skipped (exists; --force to overwrite)"))
     else:
@@ -1221,6 +1263,7 @@ def cmd_init(force: bool, with_z: bool) -> int:
             report.append((baseline.as_posix(), "FAILED (detect-secrets scan)"))
         else:
             put(baseline, data)
+            findings = baseline_findings(data)
 
     _, hook_rel = _run("git rev-parse --git-path hooks/pre-commit")
     hook = Path(hook_rel)
@@ -1246,6 +1289,7 @@ def cmd_init(force: bool, with_z: bool) -> int:
     width = max(len(p) for p, _ in report)
     for path_str, status in report:
         print(f"  {path_str:<{width}}  {status}")
+    print_baseline_warning(findings)
 
     if with_z:
         print(

@@ -193,3 +193,29 @@ def test_gitattributes_force_replaces_only_block(repo, capsys):
     rc, out = _init(capsys, force=True)
     assert rc == 0, out
     assert (repo / ".gitattributes").read_bytes() == before + _BLOCK.encode() + after
+
+
+# ---------------------------------------------------------------------------
+# INIT-8: warning for secrets already in the repo
+# ---------------------------------------------------------------------------
+
+
+def test_init_warns_about_existing_secrets(repo, capsys):
+    # Built at runtime so no key literal lives in this file.
+    fake_key = "AKIA" + "".join(chr(ord("A") + (i * 7) % 26) for i in range(16))
+    (repo / "config.py").write_text(f'x = 1\naws_key = "{fake_key}"\n', encoding="utf-8")
+    subprocess.run(["git", "add", "config.py"], check=True)
+    rc, out = _init(capsys)
+    assert rc == 0, out
+    assert "WARNING: 1 potential secret(s) already in this repo" in out
+    assert "python -m detect_secrets audit .leak-baseline.json" in out
+    assert "  config.py:2" in out
+    assert fake_key not in out
+
+
+def test_init_no_warning_when_clean(repo, capsys):
+    (repo / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], check=True)
+    rc, out = _init(capsys)
+    assert rc == 0, out
+    assert "WARNING" not in out
