@@ -1,0 +1,67 @@
+{
+  "timestamp": "20260926T062833Z",
+  "git_hash": "27ca33c767319a3571d9a913f62ba7519a900e6e",
+  "prev_record_fingerprint": "2ea818f522c77e3a3bd839c1ccce142e276dde356a7376b5cc31e0637e0ffc52",
+  "outcome": "BLOCKED",
+  "z_status": "skipped_by_human",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "UNVERIFIED",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json",
+      "output": "usage: python.exe -m detect_secrets.pre_commit_hook [-h] [-v] [--version]\n                                                    [-C <path>] [-c NUM_CORES]\n                                                    [--json]\n                                                    [--baseline FILENAME]\n                                                    [--list-all-plugins]\n                                                    [-p PLUGIN]\n                                                    [--base64-limit [BASE64_LIMIT]]\n                                                    [--hex-limit [HEX_LIMIT]]\n                                                    [--disable-plugin DISABLE_PLUGIN]\n                                                    [-n | --only-verified]\n                                                    [--exclude-lines EXCLUDE_LINES]\n                                                    [--exclude-files EXCLUDE_FILES]\n                                                    [--exclude-secrets EXCLUDE_SECRETS]\n                                                    [-f FILTER]\n                                                    [--disable-filter DISABLE_FILTER]\n                                                    [filenames ...]\npython.exe -m detect_secrets.pre_commit_hook: error: argument --baseline: Invalid path: .leak-baseline.json",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "FAIL",
+      "check": "python countersign.py verify-rules",
+      "output": "FAIL: No approved baseline found. Run 'python countersign.py approve-rules' first.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 4 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": ".......                                                                  [100%]\n7 passed in 0.03s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "PASS",
+      "check": "python -m ruff check .",
+      "output": "All checks passed!",
+      "plain_english": ""
+    }
+  ]
+}

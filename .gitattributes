@@ -1,0 +1,10 @@
+# .gitattributes
+# Ensure the pre-commit hook always has Unix line endings on every platform.
+hooks/pre-commit text eol=lf
+
+# Files whose SHA-256 is checked or chained must never have line endings
+# rewritten by Git — binary mode (-text) preserves bytes exactly.
+records/*.json      -text
+countersign.yaml    -text
+.countersign/*      -text
+.leak-baseline.json -text

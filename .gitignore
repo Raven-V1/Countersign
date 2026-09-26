@@ -118,3 +118,6 @@ build/
 # DO NOT REMOVE ABOVE PATTERNS
 # Add project-specific patterns below
 # ============================================
+# === Countersign project patterns ===
+ruff-cache/
+.ruff_cache/

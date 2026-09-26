@@ -1,0 +1,60 @@
+{
+  "timestamp": "20260926T060728Z",
+  "git_hash": "27ca33c767319a3571d9a913f62ba7519a900e6e",
+  "prev_record_fingerprint": "0c5a868d1e41196f81cbba0085d3049f37e94c89e83ab88ca44261e856b7e424",
+  "outcome": "BLOCKED",
+  "z_status": "skipped_by_human",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "FAIL",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "Run started:2026-09-26 06:07:26.997098+00:00\n\nTest results:\n>> Issue: [B602:subprocess_popen_with_shell_equals_true] subprocess call with shell=True identified, security issue.\n   Severity: High   Confidence: High\n   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)\n   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b602_subprocess_popen_with_shell_equals_true.html\n   Location: .\\countersign.py:74:17\n73\t            full_cmd,\n74\t            shell=True,\n75\t            capture_output=True,\n76\t            text=True,\n77\t        )\n78\t    except FileNotFoundError as exc:\n79\t        return -1, f\"Command not found: {exc}\"\n80\t    output = (result.stdout + result.stderr).strip()\n\n--------------------------------------------------\n\nCode scanned:\n\tTotal lines of code: 431\n\tTotal lines skipped (#nosec): 0\n\tTotal potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0\n\nRun metrics:\n\tTotal issues (by severity):\n\t\tUndefined: 0\n\t\tLow: 15\n\t\tMedium: 0\n\t\tHigh: 1\n\tTotal issues (by confidence):\n\t\tUndefined: 0\n\t\tLow: 0\n\t\tMedium: 1\n\t\tHigh: 15\nFiles skipped (0):",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "FAIL",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json",
+      "output": "usage: python.exe -m detect_secrets.pre_commit_hook [-h] [-v] [--version]\n                                                    [-C <path>] [-c NUM_CORES]\n                                                    [--json]\n                                                    [--baseline FILENAME]\n                                                    [--list-all-plugins]\n                                                    [-p PLUGIN]\n                                                    [--base64-limit [BASE64_LIMIT]]\n                                                    [--hex-limit [HEX_LIMIT]]\n                                                    [--disable-plugin DISABLE_PLUGIN]\n                                                    [-n | --only-verified]\n                                                    [--exclude-lines EXCLUDE_LINES]\n                                                    [--exclude-files EXCLUDE_FILES]\n                                                    [--exclude-secrets EXCLUDE_SECRETS]\n                                                    [-f FILTER]\n                                                    [--disable-filter DISABLE_FILTER]\n                                                    [filenames ...]\npython.exe -m detect_secrets.pre_commit_hook: error: argument --baseline: Invalid path: .leak-baseline.json",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "FAIL",
+      "check": "python countersign.py verify-rules",
+      "output": "FAIL: No approved baseline found. Run 'python countersign.py approve-rules' first.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 1 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": ".......                                                                  [100%]\n7 passed in 0.04s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "UNVERIFIED",
+      "check": "python -m ruff check .",
+      "output": "PLW1510 `subprocess.run` without explicit `check` argument\n  --> countersign.py:72:18\n   |\n70 |         full_cmd = cmd + \" \" + \" \".join(extra_args)\n71 |     try:\n72 |         result = subprocess.run(\n   |                  ^^^^^^^^^^^^^^\n73 |             full_cmd,\n74 |             shell=True,\n   |\nhelp: Add explicit `check=False`\n\nSIM103 Return the condition directly\n  --> countersign.py:90:5\n   |\n88 |       # python -m on a missing module: rc=1 + specific message\n89 |       low = output.lower()\n90 | /     if rc == 1 and (\n91 | |         \"no module named\" in low\n92 | |         or \"can't find\" in low\n93 | |         or \"is not recognized\" in low\n94 | |     ):\n95 | |         return True\n96 | |     return False\n   | |________________^\nhelp: Inline condition\n\nSIM103 Return the condition directly\n   --> countersign.py:191:5\n    |\n189 |       if priority == \"security\" and status in (\"FAIL\", \"UNVERIFIED\"):\n190 |           return True\n191 | /     if priority == \"functional\" and status == \"FAIL\":\n192 | |         return True\n193 | |     return False\n    | |________________^\nhelp: Inline condition\n\nRUF100 [*] Unused `noqa` directive (non-enabled: `A002`)\n  --> demo_app\\app.py:64:65\n   |\n63 | class TodoHandler(BaseHTTPRequestHandler):\n64 |     def log_message(self, format: str, *args: object) -> None:  # noqa: A002\n   |                                                                 ^^^^^^^^^^^^\n65 |         pass  # suppress access-log noise\n   |\nhelp: Remove unused `noqa` directive\n   |\n63 | class TodoHandler(BaseHTTPRequestHandler):\n   -     def log_message(self, format: str, *args: object) -> None:  # noqa: A002\n64 +     def log_message(self, format: str, *args: object) -> None:\n65 |         pass  # suppress access-log noise\n   |\n\nPLR0402 [*] Use `from demo_app import app` in lieu of alias\n  --> demo_app\\test_app.py:11:8\n   |\n 9 | import pytest\n10 |\n11 | import demo_app.app as app\n   |        ^^^^^^^^^^^^^^^^^^^\nhelp: Replace with `from demo_app import app`\n   |\n10 |\n   - import demo_app.app as app\n11 + from demo_app import app\n12 |\n   |\n\nFound 5 errors.\n[*] 2 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).",
+      "plain_english": ""
+    }
+  ]
+}

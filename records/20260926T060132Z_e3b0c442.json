@@ -1,0 +1,60 @@
+{
+  "timestamp": "20260926T060132Z",
+  "git_hash": "27ca33c767319a3571d9a913f62ba7519a900e6e",
+  "prev_record_fingerprint": "genesis",
+  "outcome": "BLOCKED",
+  "z_status": "skipped_by_human",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "FAIL",
+      "check": "bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "'bandit' is not recognized as an internal or external command,\noperable program or batch file.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "FAIL",
+      "check": "detect-secrets-hook --baseline .leak-baseline.json",
+      "output": "'detect-secrets-hook' is not recognized as an internal or external command,\noperable program or batch file.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "FAIL",
+      "check": "python countersign.py verify-rules",
+      "output": "FAIL: No approved baseline found. Run 'python countersign.py approve-rules' first.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: No records yet \u2014 chain is trivially intact (genesis).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "FAIL",
+      "check": "pytest demo_app/ -q --tb=short",
+      "output": "'pytest' is not recognized as an internal or external command,\noperable program or batch file.",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "FAIL",
+      "check": "ruff check .",
+      "output": "'ruff' is not recognized as an internal or external command,\noperable program or batch file.",
+      "plain_english": ""
+    }
+  ]
+}

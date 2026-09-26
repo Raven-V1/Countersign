@@ -24,7 +24,7 @@
 - id: SEC-001
   requirement: No medium or high severity issues found by bandit in Python code
   priority: security
-  check: "bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q"
+  check: "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q"
   paths:
     - "**/*.py"
   ai_access: read
@@ -32,7 +32,7 @@
 - id: SEC-002
   requirement: No high-entropy strings or known key patterns in staged files
   priority: security
-  check: "detect-secrets-hook --baseline .leak-baseline.json"
+  check: 'python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign'
   paths:
     - "**/*"
   ai_access: read
@@ -57,7 +57,7 @@
 - id: FUNC-001
   requirement: All pytest tests in demo_app/ pass
   priority: functional
-  check: "pytest demo_app/ -q --tb=short"
+  check: "python -m pytest demo_app/ -q --tb=short"
   paths:
     - "demo_app/**/*.py"
   ai_access: edit
@@ -70,10 +70,18 @@
     - "countersign.py"
   ai_access: edit
 
+- id: DEMO-001
+  requirement: DELETE route (do_DELETE) is present in demo_app/app.py
+  priority: functional
+  check: "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\""
+  paths:
+    - "demo_app/app.py"
+  ai_access: edit
+
 - id: QUAL-001
   requirement: Python source files pass ruff style checks
   priority: quality
-  check: "ruff check ."
+  check: "python -m ruff check ."
   paths:
     - "**/*.py"
   ai_access: edit

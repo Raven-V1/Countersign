@@ -1,0 +1,60 @@
+{
+  "timestamp": "20260926T061223Z",
+  "git_hash": "27ca33c767319a3571d9a913f62ba7519a900e6e",
+  "prev_record_fingerprint": "37a980d0fe6639514776bd031036c1b73fa983e650fe400a22a9d59b22d322e0",
+  "outcome": "BLOCKED",
+  "z_status": "skipped_by_human",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "UNVERIFIED",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json",
+      "output": "usage: python.exe -m detect_secrets.pre_commit_hook [-h] [-v] [--version]\n                                                    [-C <path>] [-c NUM_CORES]\n                                                    [--json]\n                                                    [--baseline FILENAME]\n                                                    [--list-all-plugins]\n                                                    [-p PLUGIN]\n                                                    [--base64-limit [BASE64_LIMIT]]\n                                                    [--hex-limit [HEX_LIMIT]]\n                                                    [--disable-plugin DISABLE_PLUGIN]\n                                                    [-n | --only-verified]\n                                                    [--exclude-lines EXCLUDE_LINES]\n                                                    [--exclude-files EXCLUDE_FILES]\n                                                    [--exclude-secrets EXCLUDE_SECRETS]\n                                                    [-f FILTER]\n                                                    [--disable-filter DISABLE_FILTER]\n                                                    [filenames ...]\npython.exe -m detect_secrets.pre_commit_hook: error: argument --baseline: Invalid path: .leak-baseline.json",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "FAIL",
+      "check": "python countersign.py verify-rules",
+      "output": "FAIL: No approved baseline found. Run 'python countersign.py approve-rules' first.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 2 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": ".......                                                                  [100%]\n7 passed in 0.03s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "FAIL",
+      "check": "python -m ruff check .",
+      "output": "PLW1510 `subprocess.run` without explicit `check` argument\n  --> countersign.py:75:18\n   |\n73 |         tokens.extend(extra_args)\n74 |     try:\n75 |         result = subprocess.run(\n   |                  ^^^^^^^^^^^^^^\n76 |             tokens,\n77 |             shell=False,\n   |\nhelp: Add explicit `check=False`\n\nSIM103 Return the condition directly\n   --> countersign.py:241:5\n    |\n239 |       if priority == \"security\" and status in (\"FAIL\", \"UNVERIFIED\"):\n240 |           return True\n241 | /     if priority == \"functional\" and status == \"FAIL\":\n242 | |         return True\n243 | |     return False\n    | |________________^\nhelp: Inline condition\n\nRUF100 [*] Unused `noqa` directive (non-enabled: `A002`)\n  --> demo_app\\app.py:64:65\n   |\n63 | class TodoHandler(BaseHTTPRequestHandler):\n64 |     def log_message(self, format: str, *args: object) -> None:  # noqa: A002\n   |                                                                 ^^^^^^^^^^^^\n65 |         pass  # suppress access-log noise\n   |\nhelp: Remove unused `noqa` directive\n   |\n63 | class TodoHandler(BaseHTTPRequestHandler):\n   -     def log_message(self, format: str, *args: object) -> None:  # noqa: A002\n64 +     def log_message(self, format: str, *args: object) -> None:\n65 |         pass  # suppress access-log noise\n   |\n\nPLR0402 [*] Use `from demo_app import app` in lieu of alias\n  --> demo_app\\test_app.py:11:8\n   |\n 9 | import pytest\n10 |\n11 | import demo_app.app as app\n   |        ^^^^^^^^^^^^^^^^^^^\nhelp: Replace with `from demo_app import app`\n   |\n10 |\n   - import demo_app.app as app\n11 + from demo_app import app\n12 |\n   |\n\nFound 4 errors.\n[*] 2 fixable with the `--fix` option (1 hidden fix can be enabled with the `--unsafe-fixes` option).",
+      "plain_english": ""
+    }
+  ]
+}

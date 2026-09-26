@@ -1,0 +1,67 @@
+{
+  "timestamp": "20260926T063252Z",
+  "git_hash": "27ca33c767319a3571d9a913f62ba7519a900e6e",
+  "prev_record_fingerprint": "a52f51616daf16dcbc47c22d3ba97b87fa2364e044dd1ffe42a1d5bf96c5dc6b",
+  "outcome": "BLOCKED",
+  "z_status": "skipped_by_human",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "FAIL",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json",
+      "output": "ERROR: Potential secrets about to be committed to git repo!\n\nSecret Type: AWS Access Key\nLocation:    demo_app\\scenarios\\attack.md:117\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T060132Z_e3b0c442.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T060728Z_277c0ed3.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T060728Z_277c0ed3.json:4\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T061223Z_277c0ed3.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T061223Z_277c0ed3.json:4\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T061241Z_d3f6abb2.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T061241Z_d3f6abb2.json:4\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T062833Z_d3f6abb2.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T062833Z_d3f6abb2.json:4\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T062953Z_d3f6abb2.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T062953Z_d3f6abb2.json:4\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T063231Z_1b65be0f.json:3\n\nSecret Type: Hex High Entropy String\nLocation:    records\\20260926T063231Z_1b65be0f.json:4\n\nPossible mitigations:\n  - For information about putting your secrets in a safer place, please ask in\n    #security\n  - Mark false positives with an inline `pragma: allowlist secret` comment\n\nIf a secret has already been committed, visit\nhttps://help.github.com/articles/removing-sensitive-data-from-a-repository",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 7 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": ".......                                                                  [100%]\n7 passed in 0.03s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "PASS",
+      "check": "python -m ruff check .",
+      "output": "All checks passed!",
+      "plain_english": ""
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Countersign — Python dependencies
+# Install with: pip install -r requirements.txt
+
+# Core engine
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# Security checks
+bandit>=1.7
+detect-secrets>=1.4
+
+# Style checks
+ruff>=0.4
+
+# Testing
+pytest>=8.0
+
+# Dashboard
+streamlit>=1.35
+pandas>=2.0
+
+# IBM watsonx.ai (Phase 3)
+ibm-watsonx-ai>=1.0
