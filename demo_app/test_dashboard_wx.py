@@ -1,15 +1,22 @@
 """
-demo_app/test_dashboard_wx.py -- Dashboard "watsonx explanations" view and logo.
+demo_app/test_dashboard_wx.py -- Dashboard run labels, watsonx explanations view,
+search, logo, and `countersign dashboard --repo`.
 
 Covers:
-  WX-1. Default view: lists every stored explanation newest first, with the
-        summary line, guard notes, and records whose wx_error is set.
+  UX-1. Timeline: runs numbered oldest = #1, newest first, human labels;
+        the raw file name is still shown (last column, detail caption).
+  UX-2. Rule display names "<ID> · <requirement>" with rules; bare ID without.
+  WX-1. Lists every stored explanation newest first, with the summary line,
+        guard notes, and records whose wx_error is set.
   WX-2. Status and rule-id filters.
-  WX-3. Connected (untrusted) source: explanation text only via st.text; a
-        markdown link stays literal.
-  WX-4. Empty state.
-  WX-5. Back to timeline returns; no subprocess beyond the default verify-chain.
-  WX-6. Missing logo asset does not crash the app.
+  WX-3. Scoped to the selected run ("This run" default), radio expands to all;
+        no selection -> all runs; selection survives the view and Back.
+  WX-4. Search: case-insensitive substring, combines with filters, regex
+        characters are literal; "N of M shown".
+  WX-5. Connected (untrusted) source: record text only via st.text.
+  WX-6. Empty state.
+  LOGO. Present or missing, the app does not crash.
+  CLI.  --repo rejects a missing dir or one without records/, runs in it otherwise.
 
 No network and no watsonx: records are written to a tmp dir or served from a
 stubbed in-memory zip; subprocess.run is stubbed.
@@ -26,10 +33,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 _REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO))
+import countersign
 import countersign_connect as connect
 
 _APP = _REPO / "dashboard" / "app.py"
@@ -39,12 +48,33 @@ _CAPTION = (
 )
 _EVIL = "See [click me](https://evil.example) and ![img](https://evil.example/x.png)"
 _GUARD = "Explanation withheld: model output contradicted the verdict."
+_RULES_YAML = """\
+- id: SEC-001
+  requirement: No medium or high bandit issues
+  priority: security
+  check: "x"
+  paths: ["**/*"]
+  ai_access: read
+- id: SEC-002
+  requirement: No secrets in staged files
+  priority: security
+  check: "x"
+  paths: ["**/*"]
+  ai_access: read
+- id: FUNC-001
+  requirement: Tests pass
+  priority: functional
+  check: "x"
+  paths: ["**/*"]
+  ai_access: edit
+"""
 
 
-def _rec(prev: str, ts: str, results: list[dict], model: str = "", error: str = "") -> bytes:
+def _rec(prev: str, ts: str, results: list[dict], model: str = "", error: str = "",
+         git_hash: str = "1111111000") -> bytes:
     rec = {
         "timestamp": ts,
-        "git_hash": "abc123",
+        "git_hash": git_hash,
         "prev_record_fingerprint": prev,
         "outcome": "BLOCKED",
         "z_status": "not_configured",
@@ -63,12 +93,12 @@ def _res(rid: str, status: str, plain: str = "") -> dict:
 
 
 def _records() -> list[tuple[str, bytes]]:
-    """Three chained records: oldest has two explanations, middle a guard note
-    plus an UNVERIFIED explanation, newest only a wx_error."""
+    """Three chained records (Run #1..#3): #1 has two explanations, #2 a guard
+    note plus an UNVERIFIED explanation, #3 only a wx_error."""
     specs = [
         ("20260926T010000Z", [_res("SEC-002", "FAIL", "A secret was found."), _res("QUAL-001", "PASS")],
          "ibm/granite-3-8b-instruct", ""),
-        ("20260926T020000Z", [_res("SEC-001", "FAIL", _GUARD), _res("FUNC-001", "UNVERIFIED", "No test command.")],
+        ("20260926T020000Z", [_res("SEC-001", "FAIL", _GUARD), _res("FUNC-001", "UNVERIFIED", "No test command (.*) set.")],
          "meta-llama/llama-3-3-70b-instruct", ""),
         ("20260926T030000Z", [_res("SEC-002", "FAIL")], "", "TimeoutError"),
     ]
@@ -84,6 +114,7 @@ def _records() -> list[tuple[str, bytes]]:
 def run_app(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("COUNTERSIGN_VERIFY_VIA_MODULE", raising=False)
+    st.cache_data.clear()  # load_rules caches on the relative "countersign.yaml"
     calls: list = []
 
     def fake_run(cmd, *a, **kw):
@@ -92,12 +123,14 @@ def run_app(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    def start(files: list[tuple[str, bytes]] | None = None, app: Path = _APP) -> AppTest:
-        # A unique records dir per test keeps st.cache_data from serving another test's records.
+    def start(files: list[tuple[str, bytes]] | None = None, *, rules: str | None = None,
+              app: Path = _APP) -> AppTest:
         rdir = tmp_path / f"records_{len(list(tmp_path.iterdir()))}"
         rdir.mkdir()
         for name, raw in files or []:
             (rdir / name).write_bytes(raw)
+        if rules is not None:
+            (tmp_path / "countersign.yaml").write_text(rules, encoding="utf-8")
         monkeypatch.setenv("COUNTERSIGN_RECORDS_DIR", str(rdir))
         at = AppTest.from_file(str(app), default_timeout=30).run()
         assert not at.exception
@@ -107,9 +140,15 @@ def run_app(tmp_path, monkeypatch):
     return start
 
 
-def _open_wx(at: AppTest) -> AppTest:
-    at.sidebar.button(key="cs_wx").click()
+def _select(at: AppTest, row: int, key: str = "cs_timeline") -> AppTest:
+    at.session_state[key] = {"selection": {"rows": [row], "columns": [], "cells": []}}
     at.run()
+    assert not at.exception
+    return at
+
+
+def _open_wx(at: AppTest) -> AppTest:
+    at.sidebar.button(key="cs_wx").click().run()
     assert not at.exception
     return at
 
@@ -118,52 +157,160 @@ def _texts(at: AppTest) -> list[str]:
     return [t.value for t in at.text]
 
 
-def test_lists_explanations_newest_first(run_app):
+def _entries(at: AppTest) -> list[str]:
+    """Entry headers (Run #N · ...) in display order."""
+    return [t for t in _texts(at) if t.startswith("Run #")]
+
+
+def _bodies(at: AppTest) -> list[str]:
+    """Explanation / error texts in display order."""
+    texts = _texts(at)
+    return [texts[i + 1] for i, t in enumerate(texts) if t.startswith("Run #") and i + 1 < len(texts)]
+
+
+def _unescape(md: str) -> str:
+    return md.replace("\\", "")
+
+
+def _record_header(at: AppTest) -> str:
+    """The selected record's run-label subheader, unescaped."""
+    (h,) = [_unescape(s.value) for s in at.subheader if _unescape(s.value).startswith("Run #")]
+    return h
+
+
+# ---------------------------------------------------------------------------
+# UX-1 / UX-2: labels, file name, rule display names
+# ---------------------------------------------------------------------------
+
+
+def test_timeline_labels_numbered_and_file_kept(run_app):
+    at = run_app(list(reversed(_records())))  # write order must not matter
+    df = at.dataframe[0].value
+    assert list(df.columns) == ["Run", "When", "Outcome", "Chain", "Z Approval", "Commit", "Record file"]
+    assert list(df["Run"]) == ["Run #3", "Run #2", "Run #1"]
+    assert list(df["When"]) == ["Sep 26, 03:00 UTC", "Sep 26, 02:00 UTC", "Sep 26, 01:00 UTC"]
+    assert list(df["Commit"]) == ["1111111"] * 3
+    assert list(df["Record file"]) == [n for n, _ in reversed(_records())]
+
+    _select(at, 1)
+    assert _record_header(at) == "Run #2 · Sep 26, 02:00 UTC · BLOCKED · commit 1111111"
+    assert any("Record file: `20260926T020000Z_00000000.json`" in c.value for c in at.caption)
+
+
+def test_rule_display_names_with_rules(run_app):
+    at = _select(run_app(_records(), rules=_RULES_YAML), 1)
+    labels = [_unescape(e.label) for e in at.expander]
+    assert "SEC-001 · No medium or high bandit issues  ·  FAIL" in labels
+    assert "FUNC-001 · Tests pass  ·  UNVERIFIED" in labels
+
+    at = _open_wx(at)
+    assert _entries(at)[0] == "Run #2 · SEC-001 · No medium or high bandit issues · FAIL · meta-llama/llama-3-3-70b-instruct"
+
+
+def test_rule_display_names_without_rules(run_app):
+    at = _open_wx(run_app(_records()))
+    assert _entries(at)[0] == "Run #2 · SEC-001 · FAIL · meta-llama/llama-3-3-70b-instruct"
+
+
+# ---------------------------------------------------------------------------
+# WX-1..3
+# ---------------------------------------------------------------------------
+
+
+def test_lists_all_runs_without_selection(run_app):
     at = _open_wx(run_app(_records()))
     assert any(c.value == _CAPTION for c in at.caption)
-    texts = _texts(at)
-    assert texts[0] == (
+    assert not any(t.startswith("Showing explanations for") for t in _texts(at))
+    assert not at.radio
+    assert (
         "3 explanation(s) across 2 record(s); model(s) used: "
         "ibm/granite-3-8b-instruct, meta-llama/llama-3-3-70b-instruct"
-    )
-    bodies = [t for t in texts[1:] if not t.startswith("20260926T")]
-    assert bodies == [_GUARD, "No test command.", "A secret was found.", "wx_error: TimeoutError"]
-    metas = [t for t in texts if t.startswith("20260926T")]
-    assert "SEC-001  FAIL" in metas[0] and "meta-llama/llama-3-3-70b-instruct" in metas[0]
-    assert metas[0].startswith("20260926T020000Z_00000000.json  ·  2026-09-26 02:00:00 UTC")
-    assert metas[-1].startswith("20260926T030000Z_00000000.json")  # the wx_error record
+    ) in _texts(at)
+    assert _bodies(at) == [_GUARD, "No test command (.*) set.", "A secret was found.", "wx_error: TimeoutError"]
+    assert _entries(at)[-1] == "Run #3 · watsonx error · no model recorded"
+    assert "4 of 4 shown" in _texts(at)
 
 
 def test_filters(run_app):
     at = _open_wx(run_app(_records()))
     at.selectbox(key="cs_wx_status").select("FAIL").run()
-    bodies = [t for t in _texts(at)[1:] if not t.startswith("20260926T")]
-    assert bodies == [_GUARD, "A secret was found."]  # errors hidden when filtered
+    assert _bodies(at) == [_GUARD, "A secret was found."]  # errors hidden when filtered
+    assert "2 of 4 shown" in _texts(at)
 
     at.selectbox(key="cs_wx_status").select("All")
     at.selectbox(key="cs_wx_rule").select("FUNC-001").run()
-    bodies = [t for t in _texts(at)[1:] if not t.startswith("20260926T")]
-    assert bodies == ["No test command."]
+    assert _bodies(at) == ["No test command (.*) set."]
 
     at.selectbox(key="cs_wx_status").select("FAIL").run()
-    assert [t for t in _texts(at)[1:] if not t.startswith("20260926T")] == []
+    assert _bodies(at) == []
     assert any("No explanations match" in c.value for c in at.caption)
 
 
-def test_empty_state(run_app):
-    raw = _rec("genesis", "20260926T010000Z", [_res("SEC-001", "PASS")])
-    at = _open_wx(run_app([("20260926T010000Z_00000000.json", raw)]))
-    assert [i.value for i in at.info] == ["No watsonx explanations in these records."]
-    assert any(c.value == _CAPTION for c in at.caption)
+def test_scoped_to_selected_run_and_toggle(run_app):
+    at = _select(run_app(_records()), 1)  # row 1 = Run #2
+    at = _open_wx(at)
+    assert "Showing explanations for Run #2" in _texts(at)
+    assert at.radio(key="cs_wx_scope_mode").value == "This run"
+    assert all(e.startswith("Run #2 ·") for e in _entries(at))
+    assert _bodies(at) == [_GUARD, "No test command (.*) set."]
+
+    at.radio(key="cs_wx_scope_mode").set_value("All runs").run()
+    assert len(_bodies(at)) == 4
 
 
-def test_back_to_timeline(run_app):
-    at = _open_wx(run_app(_records()))
-    assert not at.dataframe
+def test_selection_survives_view_and_back(run_app):
+    at = _open_wx(_select(run_app(_records()), 2))  # Run #1
+    assert "Showing explanations for Run #1" in _texts(at)
     at.button(key="cs_wx_back").click().run()
     assert not at.exception
-    assert len(at.dataframe[0].value) == 3
-    assert all(cmd[-1] == "verify-chain" for cmd in run_app.calls)  # never anything else
+    assert at.dataframe[0].value is not None
+    assert _record_header(at).startswith("Run #1 · ")
+    # And again: still scoped to the same run.
+    at = _open_wx(at)
+    assert "Showing explanations for Run #1" in _texts(at)
+
+
+# ---------------------------------------------------------------------------
+# WX-4: search
+# ---------------------------------------------------------------------------
+
+
+def test_search(run_app):
+    at = _open_wx(run_app(_records(), rules=_RULES_YAML))
+    search = at.text_input(key="cs_wx_search")
+    assert search.max_chars == 200
+
+    search.input("SECRET").run()  # explanation text, case-insensitive
+    assert _bodies(at) == ["A secret was found."]
+    assert "1 of 4 shown" in _texts(at)
+
+    at.text_input(key="cs_wx_search").input("bandit").run()  # requirement
+    assert _bodies(at) == [_GUARD]
+
+    at.text_input(key="cs_wx_search").input("run #3").run()  # run label + wx_error record
+    assert _bodies(at) == ["wx_error: TimeoutError"]
+
+    at.text_input(key="cs_wx_search").input("timeout").run()  # wx_error text
+    assert _bodies(at) == ["wx_error: TimeoutError"]
+
+    at.text_input(key="cs_wx_search").input("sec-00").run()  # rule id, combined with a filter
+    at.selectbox(key="cs_wx_rule").select("SEC-002").run()
+    assert _bodies(at) == ["A secret was found."]
+
+
+def test_search_is_literal_not_regex(run_app):
+    at = _open_wx(run_app(_records()))
+    at.text_input(key="cs_wx_search").input("(.*)").run()
+    assert _bodies(at) == ["No test command (.*) set."]  # only the literal occurrence
+
+    at.text_input(key="cs_wx_search").input(".*secret").run()
+    assert _bodies(at) == []
+    assert "0 of 4 shown" in _texts(at)
+
+
+# ---------------------------------------------------------------------------
+# WX-5 / WX-6
+# ---------------------------------------------------------------------------
 
 
 def test_untrusted_source_is_plain_text(run_app, monkeypatch):
@@ -174,24 +321,70 @@ def test_untrusted_source_is_plain_text(run_app, monkeypatch):
     with zipfile.ZipFile(buf, "w") as zf:
         for name, raw in files:
             zf.writestr(f"repo-main/records/{name}", raw)
+        zf.writestr("repo-main/countersign.yaml", "- id: SEC-002\n  requirement: '[req](https://evil.example)'\n  priority: security\n")
     monkeypatch.setattr(connect, "fetch_zip", lambda o, r, b: buf.getvalue())
 
     at = run_app()
     at.sidebar.text_input(key="cs_repo").input("owner/repo")
     at.sidebar.button(key="cs_connect").click().run()
+    _select(at, 0, key="cs_timeline:owner/repo@main")
     at = _open_wx(at)
     texts = _texts(at)
     assert _EVIL in texts
     assert "wx_error: boom **bold** [x](https://evil.example)" in texts
-    assert any("model: ibm/granitescript" in t for t in texts)  # sanitised model id
-    rendered = [m.value for m in at.markdown] + [i.value for i in at.info] + [c.value for c in at.caption]
+    assert "Run #1 · SEC-002 · [req](https://evil.example) · FAIL · ibm/granitescript" in texts
+
+    at.button(key="cs_wx_back").click().run()
+    assert "Record file: 20260926T010000Z_00000000.json" in _texts(at)
+    rendered = (
+        [m.value for m in at.markdown] + [i.value for i in at.info] + [c.value for c in at.caption]
+        + [s.value for s in at.subheader]
+    )
     assert not any("evil.example" in v for v in rendered)
-    assert not any("evil.example" in h.proto.body for h in at.get("html"))
+    # st.html bodies carry the requirement only html.escape'd: no live link or image.
+    bodies = [h.proto.body for h in at.get("html")]
+    assert any("[req](https://evil.example)" in b for b in bodies)
+    assert not any("<a " in b or "href" in b or "<img" in b for b in bodies)
+    # Expander labels are markdown: the requirement arrives fully escaped.
+    (label,) = [e.label for e in at.expander]
+    assert "\\[req\\]\\(https\\:" in label
 
 
-def test_logo_missing_does_not_crash(run_app, tmp_path):
+def test_empty_state(run_app):
+    raw = _rec("genesis", "20260926T010000Z", [_res("SEC-001", "PASS")])
+    at = _open_wx(run_app([("20260926T010000Z_00000000.json", raw)]))
+    assert [i.value for i in at.info] == ["No watsonx explanations in these records."]
+    assert any(c.value == _CAPTION for c in at.caption)
+
+
+# ---------------------------------------------------------------------------
+# LOGO / CLI
+# ---------------------------------------------------------------------------
+
+
+def test_logo_present_and_missing(run_app, tmp_path):
+    at = run_app(_records())
+    assert at.sidebar.get("imgs"), "logo image expected in the sidebar"
+
     bare = tmp_path / "bare_dashboard"
     bare.mkdir()
     shutil.copy(_APP, bare / "app.py")  # no assets/ next to it
     at = run_app(_records(), app=bare / "app.py")
+    assert not at.sidebar.get("imgs")
     assert len(at.dataframe[0].value) == 3
+
+
+def test_dashboard_repo_flag(tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(countersign.subprocess, "call", lambda cmd, **kw: calls.append(kw) or 0)
+
+    assert countersign.cmd_dashboard(repo=str(tmp_path / "nope")) == 1
+    assert "not a directory" in capsys.readouterr().out
+
+    assert countersign.cmd_dashboard(repo=str(tmp_path)) == 1
+    assert "no records/ directory" in capsys.readouterr().out
+    assert calls == []
+
+    (tmp_path / "records").mkdir()
+    assert countersign.cmd_dashboard(repo=str(tmp_path)) == 0
+    assert calls[0]["cwd"] == tmp_path.resolve()

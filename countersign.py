@@ -1272,8 +1272,22 @@ def cmd_init(force: bool, with_z: bool) -> int:
     return 0
 
 
-def cmd_dashboard() -> int:
-    """Run the packaged Streamlit dashboard against records/ in the cwd."""
+def cmd_dashboard(repo: str | None = None) -> int:
+    """Run the packaged Streamlit dashboard against records/ in the cwd.
+
+    repo (CLI --repo only): a local directory containing records/ to run in
+    instead of the cwd. Nothing in the web UI accepts local paths.
+    """
+    cwd = Path.cwd()
+    if repo is not None:
+        cwd = Path(repo).expanduser().resolve()
+        if not cwd.is_dir():
+            print(f"countersign dashboard: --repo {repo}: not a directory.")
+            return 1
+        if not (cwd / "records").is_dir():
+            print(f"countersign dashboard: --repo {cwd}: no records/ directory there.")
+            return 1
+
     missing = [m for m in ("streamlit", "pandas") if importlib_util.find_spec(m) is None]
     if missing:
         print(
@@ -1289,7 +1303,7 @@ def cmd_dashboard() -> int:
 
     cmd = [sys.executable, "-m", "streamlit", "run"]
     theme = []
-    if not Path(".streamlit", "config.toml").exists():
+    if not (cwd / ".streamlit" / "config.toml").exists():
         theme = [
             "--theme.base", "dark",
             "--theme.primaryColor", "#0f62fe",
@@ -1302,7 +1316,7 @@ def cmd_dashboard() -> int:
     env = {**os.environ, "COUNTERSIGN_VERIFY_VIA_MODULE": "1"}
     with resources.as_file(app_ref) as app_path:
         try:
-            return subprocess.call([*cmd, str(app_path), *theme], env=env)
+            return subprocess.call([*cmd, str(app_path), *theme], env=env, cwd=cwd)
         except KeyboardInterrupt:
             return 0
 
@@ -1350,7 +1364,10 @@ def main() -> None:
     init_p = sub.add_parser("init", help="Write starter Countersign files into this git repo root.")
     init_p.add_argument("--force", action="store_true", help="Overwrite existing files.")
     init_p.add_argument("--z", dest="with_z", action="store_true", help="Also write zos/ IBM Z files.")
-    sub.add_parser("dashboard", help="Run the Streamlit dashboard on records/ in this directory.")
+    dash_p = sub.add_parser("dashboard", help="Run the Streamlit dashboard on records/ in this directory.")
+    dash_p.add_argument(
+        "--repo", metavar="PATH", help="Local repo directory (with records/) to show instead of the cwd."
+    )
 
     args = parser.parse_args()
 
@@ -1381,7 +1398,7 @@ def main() -> None:
     elif args.command == "init":
         sys.exit(cmd_init(force=args.force, with_z=args.with_z))
     elif args.command == "dashboard":
-        sys.exit(cmd_dashboard())
+        sys.exit(cmd_dashboard(repo=args.repo))
     else:
         parser.print_help()
         sys.exit(1)

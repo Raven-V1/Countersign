@@ -1,11 +1,13 @@
 """Countersign Dashboard — reads records/ read-only, never calls watsonx."""
 
+import copy
 import html
 import json
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -236,6 +238,63 @@ def fmt_timestamp(ts: str) -> str:
         return ts or "—"
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def fmt_when(ts: str) -> str:
+    """20260926T140922Z -> Sep 26, 14:09 UTC"""
+    try:
+        dt = datetime.strptime(ts, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return ts or "—"
+    return f"{_MONTHS[dt.month - 1]} {dt.day:02d}, {dt:%H:%M} UTC"  # locale-independent
+
+
+def _outcome_label(rec: dict, priority_map: dict[str, str]) -> str:
+    """Return display label for the Outcome cell, adding '(warnings)' when needed.
+
+    priority_map: {rule_id: priority} built from countersign.yaml via load_rules().
+    """
+    outcome = rec.get("outcome", "—")
+    if outcome == "PASS":
+        has_qual_fail = any(
+            r.get("status") == "FAIL"
+            for r in rec.get("results", [])
+            if priority_map.get(r.get("id", "")) == "quality"
+        )
+        if has_qual_fail:
+            return "PASS (warnings)"
+    return outcome
+
+
+def run_numbers(records: list[dict]) -> dict[str, int]:
+    """{record file: run number}; oldest record in the loaded source is #1."""
+    return {name: i for i, name in enumerate(sorted(r["_filename"] for r in records), start=1)}
+
+
+def run_label(rec: dict, run_no: int, priority_map: dict[str, str]) -> str:
+    """Run #N · Mon DD, HH:MM UTC · OUTCOME · commit abc1234 (display only)."""
+    commit = (rec.get("git_hash") or "")[:7] or "—"
+    return (
+        f"Run #{run_no} · {fmt_when(rec.get('timestamp', ''))} · "
+        f"{_outcome_label(rec, priority_map)} · commit {commit}"
+    )
+
+
+def rule_display(rule_id: str, rules_by_id: dict[str, dict]) -> str:
+    """<ID> · <requirement> from the loaded countersign.yaml, else the bare ID."""
+    requirement = (rules_by_id.get(rule_id, {}).get("requirement") or "").strip()
+    return f"{rule_id} · {requirement}" if requirement else rule_id
+
+
+_MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$:])")
+
+
+def md_escape(text: str) -> str:
+    """Backslash-escape markdown so a widget label shows the text literally."""
+    return _MD_SPECIAL.sub(r"\\\1", text)
+
+
 # Display labels for z_status values — stored values are never changed
 _Z_STATUS_LABELS: dict[str, str] = {
     "skipped_by_human": "Skipped by user",
@@ -368,9 +427,9 @@ def _style_timeline(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         styler = styler.map(
             lambda v: _cell_style(v, _OUTCOME_FILLS), subset=["Outcome"]
         )
-    if "Chain (SEC-004)" in df.columns:
+    if "Chain" in df.columns:
         styler = styler.map(
-            lambda v: _cell_style(v, _CHAIN_FILLS), subset=["Chain (SEC-004)"]
+            lambda v: _cell_style(v, _CHAIN_FILLS), subset=["Chain"]
         )
     if "Z Approval" in df.columns:
         styler = styler.map(
@@ -393,7 +452,9 @@ _WX_CAPTION = (
 )
 
 
-def wx_entries(records: list[dict]) -> tuple[list[dict], list[dict]]:
+def wx_entries(
+    records: list[dict], labels: dict[str, str], run_no: dict[str, int], rules_by_id: dict[str, dict]
+) -> tuple[list[dict], list[dict]]:
     """Return (explanations, errors) from records, newest record first.
 
     An explanation is any result with plain_english text, including guard notes
@@ -401,27 +462,54 @@ def wx_entries(records: list[dict]) -> tuple[list[dict], list[dict]]:
     """
     explanations, errors = [], []
     for rec in sorted(records, key=lambda r: r.get("_filename", ""), reverse=True):
+        name = rec.get("_filename", "")
         base = {
-            "file": rec.get("_filename", ""),
-            "timestamp": fmt_timestamp(rec.get("timestamp", "")),
+            "file": name,
+            "run": run_no.get(name, 0),
+            "label": labels.get(name, name),
             "model": rec.get("wx_model_id") or "",
         }
         for res in rec.get("results", []):
             text = (res.get("plain_english") or "").strip()
             if text:
-                explanations.append(
-                    {**base, "rule": res.get("id", ""), "status": res.get("status", ""), "text": text}
-                )
+                rid = res.get("id", "")
+                explanations.append({
+                    **base,
+                    "rule": rid,
+                    "display": rule_display(rid, rules_by_id),
+                    "requirement": rules_by_id.get(rid, {}).get("requirement") or "",
+                    "status": res.get("status", ""),
+                    "text": text,
+                })
         if (rec.get("wx_error") or "").strip():
             errors.append({**base, "error": rec["wx_error"].strip()})
     return explanations, errors
 
 
-def render_wx_explanations(records: list[dict]) -> None:
+def _matches(query: str, fields: list[str]) -> bool:
+    """Plain case-insensitive substring match; the query is never a pattern."""
+    return not query or any(query in (f or "").lower() for f in fields)
+
+
+def render_wx_explanations(
+    records: list[dict],
+    labels: dict[str, str],
+    run_no: dict[str, int],
+    rules_by_id: dict[str, dict],
+    scope_file: str | None,
+) -> None:
     """List stored explanations. Every record-derived string goes through st.text."""
     st.subheader("watsonx explanations")
     st.caption(_WX_CAPTION)
-    explanations, errors = wx_entries(records)
+    explanations, errors = wx_entries(records, labels, run_no, rules_by_id)
+
+    if scope_file in run_no:
+        st.text(f"Showing explanations for Run #{run_no[scope_file]}")
+        scope = st.radio("Scope", ["This run", "All runs"], key="cs_wx_scope_mode", horizontal=True)
+        if scope == "This run":
+            explanations = [e for e in explanations if e["file"] == scope_file]
+            errors = [e for e in errors if e["file"] == scope_file]
+
     if not explanations and not errors:
         st.info("No watsonx explanations in these records.")
         return
@@ -433,6 +521,8 @@ def render_wx_explanations(records: list[dict]) -> None:
         f"model(s) used: {', '.join(models) or 'none recorded'}"
     )
 
+    query = st.text_input("Search explanations", max_chars=200, key="cs_wx_search")
+    query = query.strip().lower()[:200]
     col1, col2 = st.columns(2)
     status_f = col1.selectbox("Status", ["All", "FAIL", "UNVERIFIED"], key="cs_wx_status")
     rule_ids = sorted({e["rule"] for e in explanations})
@@ -440,21 +530,29 @@ def render_wx_explanations(records: list[dict]) -> None:
 
     shown = [
         e for e in explanations
-        if (status_f == "All" or e["status"] == status_f) and (rule_f == "All" or e["rule"] == rule_f)
+        if (status_f == "All" or e["status"] == status_f)
+        and (rule_f == "All" or e["rule"] == rule_f)
+        and _matches(query, [e["text"], e["rule"], e["requirement"], e["label"]])
     ]
-    if not shown:
+    # watsonx failures are not per-rule, so they show only when unfiltered.
+    shown_errors = [
+        e for e in errors
+        if status_f == "All" and rule_f == "All" and _matches(query, [e["label"], e["error"]])
+    ]
+    st.text(f"{len(shown) + len(shown_errors)} of {len(explanations) + len(errors)} shown")
+    if not shown and not shown_errors:
         st.caption("No explanations match these filters.")
+
     for e in shown:
         with st.container(border=True):
-            st.text(f"{e['file']}  ·  {e['timestamp']}  ·  {e['rule']}  {e['status']}  ·  model: {e['model'] or '—'}")
+            st.text(f"Run #{e['run']} · {e['display']} · {e['status']} · {e['model'] or 'no model recorded'}")
             st.text(e["text"])
 
-    # watsonx failures are not per-rule, so they show only when unfiltered.
-    if errors and status_f == "All" and rule_f == "All":
+    if shown_errors:
         st.markdown("**watsonx errors**")
-        for e in errors:
+        for e in shown_errors:
             with st.container(border=True):
-                st.text(f"{e['file']}  ·  {e['timestamp']}  ·  model: {e['model'] or '—'}")
+                st.text(f"Run #{e['run']} · watsonx error · {e['model'] or 'no model recorded'}")
                 st.text(f"wx_error: {e['error']}")
 
 
@@ -463,7 +561,8 @@ st.set_page_config(page_title="Countersign Dashboard", layout="wide")
 # Optional: an installed copy without the asset simply shows no logo.
 _LOGO = Path(__file__).resolve().parent / "assets" / "belvenar_logo.png"
 if _LOGO.is_file():
-    st.logo(str(_LOGO))
+    _, _logo_col, _ = st.sidebar.columns([1, 2, 1])
+    _logo_col.image(str(_LOGO), width=130)
 st.html(_CSS)
 
 st.title("Countersign Dashboard")
@@ -473,6 +572,8 @@ st.title("Countersign Dashboard")
 # ---------------------------------------------------------------------------
 _SOURCE_KEY = "cs_source"
 _VIEW_KEY = "cs_view"
+_SEL_KEY = "cs_sel"          # last timeline selection: {"src", "file", "state"}
+_RESTORE_KEY = "cs_restore_sel"
 
 with st.sidebar:
     st.header("Connect a repo")
@@ -546,11 +647,22 @@ else:
     records = source["records"]
     rules   = source["rules"] or []
 
+src_id = source["label"] if untrusted else "local"
+# {rule_id: priority} — built from countersign.yaml; used for outcome label detection
+_priority_map: dict[str, str] = {r["id"]: r.get("priority", "") for r in rules}
+rules_by_id = {r["id"]: r for r in rules}
+run_no = run_numbers(records)
+labels = {r["_filename"]: run_label(r, run_no[r["_filename"]], _priority_map) for r in records}
+
 if st.session_state.get(_VIEW_KEY) == "wx":
     if st.button("Back to timeline", key="cs_wx_back"):
         del st.session_state[_VIEW_KEY]
+        st.session_state[_RESTORE_KEY] = True
         st.rerun()
-    render_wx_explanations(records)
+    sel = st.session_state.get(_SEL_KEY) or {}
+    render_wx_explanations(
+        records, labels, run_no, rules_by_id, sel.get("file") if sel.get("src") == src_id else None
+    )
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -565,39 +677,29 @@ if not records:
         st.info("No records found. Run `python -m countersign run` to create the first record.")
     st.stop()
 
-def _outcome_label(rec: dict, priority_map: dict[str, str]) -> str:
-    """Return display label for the Outcome cell, adding '(warnings)' when needed.
-
-    priority_map: {rule_id: priority} built from countersign.yaml via load_rules().
-    """
-    outcome = rec.get("outcome", "—")
-    if outcome == "PASS":
-        has_qual_fail = any(
-            r.get("status") == "FAIL"
-            for r in rec.get("results", [])
-            if priority_map.get(r.get("id", "")) == "quality"
-        )
-        if has_qual_fail:
-            return "PASS (warnings)"
-    return outcome
-
-
-# {rule_id: priority} — built from countersign.yaml; used for outcome label detection
-_priority_map: dict[str, str] = {r["id"]: r.get("priority", "") for r in rules}
-
 timeline_rows = []
 for rec in records:
     timeline_rows.append(
         {
-            "File":             rec["_filename"],
-            "Timestamp":        fmt_timestamp(rec.get("timestamp", "")),
-            "Base commit":      (rec.get("git_hash") or "")[:8],
-            "Outcome":          _outcome_label(rec, _priority_map),
-            "Chain (SEC-004)":  sec004_text(rec),
-            "Z Approval":       z_cell(rec),
+            "Run":          f"Run #{run_no[rec['_filename']]}",
+            "When":         fmt_when(rec.get("timestamp", "")),
+            "Outcome":      _outcome_label(rec, _priority_map),
+            "Chain":        sec004_text(rec),
+            "Z Approval":   z_cell(rec),
+            "Commit":       (rec.get("git_hash") or "")[:7],
+            "Record file":  rec["_filename"],
         }
     )
 timeline_df = pd.DataFrame(timeline_rows)
+
+# Per-source key: a row picked in one source must not index into another.
+timeline_key = f"cs_timeline:{src_id}" if untrusted else "cs_timeline"
+# Streamlit drops a widget's state on runs where it is not drawn (the watsonx
+# view), so the selection is saved below and put back on Back to timeline.
+if st.session_state.pop(_RESTORE_KEY, False):
+    saved = st.session_state.get(_SEL_KEY) or {}
+    if saved.get("src") == src_id and saved.get("state") is not None:
+        st.session_state[timeline_key] = saved["state"]
 
 selected_idx = st.dataframe(
     _style_timeline(timeline_df),
@@ -605,28 +707,33 @@ selected_idx = st.dataframe(
     hide_index=True,
     on_select="rerun",
     selection_mode="single-row",
-    # Per-source key: a row picked in one source must not index into another.
-    key=f"cs_timeline:{source['label']}" if untrusted else "cs_timeline",
+    key=timeline_key,
 ).selection.rows
 
 if not selected_idx or selected_idx[0] >= len(records):
+    st.session_state[_SEL_KEY] = None
     st.info("Select a record above to inspect its rules.")
     st.stop()
 
 selected_rec = records[selected_idx[0]]
+st.session_state[_SEL_KEY] = {
+    "src": src_id,
+    "file": selected_rec["_filename"],
+    "state": copy.deepcopy(st.session_state.get(timeline_key)),
+}
 
 # ---------------------------------------------------------------------------
 # Selected record detail
 # ---------------------------------------------------------------------------
 outcome = selected_rec.get("outcome", "—")
-safe_fname = html.escape(selected_rec["_filename"])
 
+# The label is built from normalised fields only (run number, date, outcome, hex commit).
+st.subheader(md_escape(labels[selected_rec["_filename"]]))
 if untrusted:
     # File names from a connected repo or upload are shown as plain text only.
-    st.subheader("Record")
-    st.code(selected_rec["_filename"], language=None)
+    st.text(f"Record file: {selected_rec['_filename']}")
 else:
-    st.markdown(f"### Record: `{safe_fname}`")
+    st.caption(f"Record file: `{html.escape(selected_rec['_filename'])}`")
 st.html(
     f'<div style="margin-bottom:16px">'
     f'Outcome:&nbsp;{_tag(outcome)}&nbsp;&nbsp;'
@@ -665,7 +772,7 @@ for rule in rules:
 
     # Expander label is always plain text
     use_expander = status in ("FAIL", "UNVERIFIED") or outcome == "BLOCKED"
-    expander_label = f"{rid}  {status}"
+    expander_label = f"{md_escape(rule_display(rid, rules_by_id))}  ·  {status}"
 
     if use_expander:
         with st.expander(expander_label, expanded=(status == "FAIL")):

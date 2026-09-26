@@ -321,7 +321,9 @@ def test_markdown_in_plain_english_is_literal(app):
     }
     at.run()
     assert not at.exception
-    assert [t.value for t in at.text] == [_EVIL]
+    texts = [t.value for t in at.text]
+    assert _EVIL in texts
+    assert any(t.startswith("Record file: ") for t in texts)
     rendered_md = [m.value for m in at.markdown] + [i.value for i in at.info]
     assert not any("evil.example" in v for v in rendered_md)
     assert not any("evil.example" in h.proto.body for h in at.get("html"))
