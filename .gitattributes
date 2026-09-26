@@ -19,5 +19,8 @@ records/*.json             binary
 zos/*.jcl                  text eol=lf
 zos/*.py                   text eol=lf
 
+# Images are never line-ending converted.
+*.png                      binary
+
 # Starter templates written by `countersign init` stay LF.
 countersign_templates/*    text eol=lf

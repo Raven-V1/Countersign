@@ -186,6 +186,8 @@ def _normalise_record(name: str, data: dict) -> dict:
         "z_status": _text(data.get("z_status"), 40),
         "z_job_id": _text(data.get("z_job_id"), 40),
         "z_rc": z_rc if isinstance(z_rc, int) and not isinstance(z_rc, bool) else None,
+        "wx_model_id": re.sub(r"[^A-Za-z0-9._/:-]", "", _text(data.get("wx_model_id"), 100)),
+        "wx_error": _text(data.get("wx_error"), 500),
         "results": results,
     }
 

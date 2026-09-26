@@ -35,5 +35,5 @@ countersign_zos = "zos"
 
 [tool.setuptools.package-data]
 countersign_templates = ["countersign.yaml", "countersign.yml", "pre-commit"]
-countersign_dashboard = ["app.py"]
+countersign_dashboard = ["app.py", "assets/*.png"]
 countersign_zos = ["VERIFY.jcl", "verify_record.py"]
