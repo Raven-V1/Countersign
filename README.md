@@ -32,9 +32,12 @@ countersign.yaml  ->  deterministic checks  ->  gate rule  ->  hash-chained reco
 4. **Hash-chained record.** Every run writes a JSON record to `records/`
    carrying the git hash, every result, and the SHA-256 of the previous
    record. `verify-chain` detects any edited, removed, or reordered record.
-5. **IBM Z approval + ledger.** A PASS record is uploaded to z/OS USS and
-   re-verified there by a batch job. On success the job appends the record's
-   hash to a ledger file on Z. See [IBM Z Approval](#ibm-z-approval).
+5. **IBM Z approval + ledger (opt-in).** When Z is configured, a PASS record
+   is uploaded to z/OS USS and re-verified there by a batch job. On success
+   the job appends the record's hash to a ledger file on Z. Without Z
+   configured, records get `z_status=not_configured` and are not blocked.
+   This repo requires Z (its `.env` sets `COUNTERSIGN_REQUIRE_Z=1`). See
+   [IBM Z Approval](#ibm-z-approval).
 
 ## Components
 
@@ -43,9 +46,9 @@ countersign.yaml  ->  deterministic checks  ->  gate rule  ->  hash-chained reco
 | Pre-commit hook (`hooks/pre-commit`) | Runs `countersign.py run` on every `git commit`. A non-zero exit blocks the commit. |
 | GitHub Action (`.github/workflows/countersign.yml`) | Runs the same checks and gate on push and PR to `main` via `countersign.py ci`. Read-only: `contents: read`, no records written, no Z, no watsonx. |
 | watsonx.ai (`wx_explain.py`) | Explains FAILs in plain language. It never decides. The verdict is fixed before the model is called. A contradiction guard withholds any explanation that claims a FAIL or UNVERIFIED check passed. `draft-rules` writes proposals only, to `countersign.proposed.yaml`. A human reviews them, copies what they accept into `countersign.yaml`, and runs `approve-rules`. |
-| Dashboard (`dashboard/app.py`) | Streamlit view of `records/`. Read-only; never calls watsonx. |
+| Dashboard (`dashboard/app.py`) | Streamlit view of `records/`: a run timeline with run labels (run number, date, outcome, commit), per-requirement results, and a watsonx explanations view (this run or all runs, with filters and search). **Connect a repo** loads a public GitHub repo's records and **Upload records** loads files from a private one; both verify the chain and stay in the session. `dashboard --repo PATH` shows another local repo. Read-only; never calls watsonx. |
 | Bob rules + guardian mode (`.bob/`) | `scripts/generate_bob_rules.py` derives `.bob/rules/countersign.md` and `.bobignore` from `countersign.yaml`; rule BOB-001 fails if they drift. Guardian mode lets Bob edit only non-test source files to fix current FAILs, and bars it from rules, records, and approval commands. |
-| IBM Z (`zos/`) | `VERIFY.jcl` and `verify_record.py` re-verify each PASS record on USS and append it to the ledger. `z-audit` cross-checks local records against that ledger. |
+| IBM Z (`zos/`), opt-in | `VERIFY.jcl` and `verify_record.py` re-verify each PASS record on USS and append it to the ledger. `z-audit` cross-checks local records against that ledger. |
 
 ### Rules in this repo
 
@@ -76,7 +79,7 @@ cp .env.example .env          # add watsonx credentials and ZOS_USS_DIR (both op
 #    or on a POSIX shell:
 cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
-# 3. Run the gate: checks, record, watsonx explanations, Z approval
+# 3. Run the gate: checks, record, watsonx explanations, Z approval (if configured)
 python countersign.py run
 
 # 4. Read-only check: prints results, writes nothing, no Z, no watsonx
@@ -96,6 +99,19 @@ COUNTERSIGN_SKIP_Z=1 git commit -m "..."
 Other commands: `verify-rules`, `approve-rules` (human only),
 `draft-rules --from <file>`, `ci`, and `init`. The dashboard runs with
 `python countersign.py dashboard` (or `streamlit run dashboard/app.py`).
+
+### Environment variables
+
+All are optional and read from `.env` or the environment.
+
+| Variable | Effect |
+|----------|--------|
+| `IBM_CLOUD_API_KEY` | watsonx.ai API key. Without all three watsonx variables, FAIL explanations are skipped and the gate still works. |
+| `WATSONX_URL` | watsonx.ai endpoint URL. |
+| `WATSONX_PROJECT_ID` | watsonx.ai project ID. |
+| `ZOS_USS_DIR` | USS directory the Z job reads. Setting it turns Z approval on; an unreachable Z then blocks the commit. |
+| `COUNTERSIGN_REQUIRE_Z` | `1` blocks the commit when Z is not configured or unreachable, even without `ZOS_USS_DIR`. |
+| `COUNTERSIGN_SKIP_Z` | `1` makes the pre-commit hook run with `--skip-z` (recorded as `z_status=skipped_by_human`). |
 
 ## Use Countersign in your own repo
 
@@ -194,8 +210,9 @@ exactly the checks that run locally.
 
 ## IBM Z Approval
 
-Every PASS commit goes through a second verification step running on z/OS USS
-before the commit is allowed. The gate is implemented in `zos/VERIFY.jcl`
+When Z is configured (`ZOS_USS_DIR` set, or `COUNTERSIGN_REQUIRE_Z=1`), every
+PASS commit goes through a second verification step running on z/OS USS
+before the commit is allowed. This repo requires it. The gate is implemented in `zos/VERIFY.jcl`
 (submitted via Zowe CLI) and `zos/verify_record.py` (runs on USS under
 Python 3.9).
 

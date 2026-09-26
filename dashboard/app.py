@@ -559,7 +559,7 @@ def render_wx_explanations(
 st.set_page_config(page_title="Countersign Dashboard", layout="wide")
 
 # Optional: an installed copy without the asset simply shows no logo.
-_LOGO = Path(__file__).resolve().parent / "assets" / "belvenar_logo.png"
+_LOGO = Path(__file__).resolve().parent / "assets" / "belvenar_logo_white.png"
 if _LOGO.is_file():
     _, _logo_col, _ = st.sidebar.columns([1, 2, 1])
     _logo_col.image(str(_LOGO), width=130)

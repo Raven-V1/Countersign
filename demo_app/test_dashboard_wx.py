@@ -377,7 +377,7 @@ def test_logo_present_and_missing(run_app, tmp_path, monkeypatch):
     monkeypatch.setattr(DeltaGenerator, "image", spy)
 
     at = run_app(_records())
-    assert images == [(str(_REPO / "dashboard" / "assets" / "belvenar_logo.png"), 130)]
+    assert images == [(str(_REPO / "dashboard" / "assets" / "belvenar_logo_white.png"), 130)]
     assert not at.exception
 
     images.clear()

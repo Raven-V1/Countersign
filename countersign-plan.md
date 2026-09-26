@@ -62,7 +62,7 @@ Blocking policy:
 
 **Relevant Context:** `.gitignore` line 120 is the insertion point. `*.pyc` and `__pycache__/` are already covered by the template.
 
-**Status:** [ ] pending
+**Status:** [x] done. Folders and `.gitignore` project section exist. As built, `.countersign/approved_rules.sha256` is committed (not ignored), because CI and fresh clones need it for SEC-003. The `.gitkeep` stubs were removed once each folder held tracked files; only `records/.gitkeep` remains.
 
 ---
 
@@ -104,7 +104,7 @@ Blocking policy:
 
 **Relevant Context:** No external deps beyond stdlib + PyYAML + python-dotenv. `bandit`, `detect-secrets`, `ruff`, `pytest` are check tools run as subprocesses (not imported). Load `.env` with `python-dotenv` at startup.
 
-**Status:** [ ] pending
+**Status:** [x] done. `countersign.py` implements run, check, ci, approve-rules, verify-rules, verify-chain, z-audit, draft-rules, init and dashboard.
 
 ---
 
@@ -126,7 +126,7 @@ Blocking policy:
 
 **Relevant Context:** `demo_app/scenarios/` is excluded from the bandit scan in SEC-001 (the attack script contains intentional fake credential strings for demo purposes).
 
-**Status:** [ ] pending
+**Status:** [x] done. `app.py`, `test_app.py` and `scenarios/attack.md` are built. There is no separate `demo_app/countersign.yaml`: the DELETE-route rule is DEMO-001 in the root `countersign.yaml`, and FUNC-001 runs the demo tests.
 
 ---
 
@@ -140,7 +140,7 @@ Blocking policy:
 **Todo List:**
 1. Write `requirements.txt` with the above packages (no version pins yet; add `>=` minimums if known).
 
-**Status:** [ ] pending
+**Status:** [x] done, with `>=` minimums. The same minimums are declared in `pyproject.toml` (streamlit, pandas and ibm-watsonx-ai as extras).
 
 ---
 
@@ -158,7 +158,7 @@ Blocking policy:
 
 **Relevant Context:** `.git/hooks/` is never committed; `hooks/` at repo root is the committed source.
 
-**Status:** [ ] pending
+**Status:** [x] done.
 
 ---
 
@@ -192,7 +192,7 @@ Blocking policy:
 
 **Relevant Context:** Records are plain JSON committed to the repo; no database needed.
 
-**Status:** [ ] pending
+**Status:** [x] done.
 
 ---
 
@@ -211,7 +211,7 @@ Blocking policy:
 
 **Relevant Context:** Streamlit Community Cloud uses `dashboard/requirements.txt` automatically when the main file is `dashboard/app.py`.
 
-**Status:** [ ] pending
+**Status:** [x] done. Deployed at https://countersign.streamlit.app/. No `dashboard/requirements.txt`; Streamlit Community Cloud uses the root `requirements.txt`. `.streamlit/config.toml` holds theme settings only.
 
 ---
 
@@ -249,7 +249,7 @@ Blocking policy:
 
 **Relevant Context:** Credentials: `IBM_CLOUD_API_KEY`, `WATSONX_URL`, `WATSONX_PROJECT_ID` in `.env`. The hackathon account closes Sep 27 10 AM ET — explanations must be generated at check time and saved in the record. Do NOT use Agent Lab, fine-tuning, AutoAI, AI governance, Evaluation Studio, or AgentOps.
 
-**Status:** [ ] pending
+**Status:** [x] done. The module is `wx_explain.py` at the repo root (not `countersign/wx_explain.py`). A contradiction guard withholds any explanation that claims a FAIL or UNVERIFIED check passed.
 
 ---
 
@@ -268,7 +268,7 @@ Blocking policy:
 2. Prompt asks Granite to produce YAML entries following the countersign.yaml schema.
 3. Write output to `countersign.proposed.yaml`.
 
-**Status:** [ ] pending
+**Status:** [x] done. The rejected Granite proposal is kept in `docs/evidence/granite_proposal_rejected.yaml`.
 
 ---
 
@@ -401,7 +401,7 @@ _(ls result preferred over symlink per plan rule; use this absolute path in CSGN
 - `write_record` and `_update_record_z` use `write_bytes` (LF only) to avoid CRLF
   on Windows; `verify_record.py` normalises CRLF→LF before hashing.
 
-**Status:** [x] complete
+**Status:** [x] complete. Later changed to opt-in: Z runs only when `ZOS_USS_DIR` is set or `COUNTERSIGN_REQUIRE_Z=1`; otherwise records get `z_status=not_configured`. This repo sets `COUNTERSIGN_REQUIRE_Z=1`. The job files are `zos/VERIFY.jcl` and `zos/verify_record.py` (not `CSGNJOB.jcl` / `verify_chain.py`).
 
 ---
 
@@ -428,7 +428,7 @@ _(ls result preferred over symlink per plan rule; use this absolute path in CSGN
 **Todo List:**
 1. Write new `README.md`.
 
-**Status:** [ ] pending
+**Status:** [x] done.
 
 ---
 
@@ -442,7 +442,7 @@ _(ls result preferred over symlink per plan rule; use this absolute path in CSGN
 1. Write `SUBMISSION.md`.
 2. Confirm `bob_sessions/.gitkeep` is committed.
 
-**Status:** [ ] pending
+**Status:** [ ] not done. No `SUBMISSION.md` was written; the README carries the project description. `bob_sessions/` holds the four PNG summaries (its `.gitkeep` was removed once they were committed).
 
 ---
 
@@ -455,15 +455,27 @@ _(ls result preferred over symlink per plan rule; use this absolute path in CSGN
 
 ---
 
+## Built beyond the plan
+
+- **pip install + `init`.** `pyproject.toml` makes Countersign installable with `pip install git+https://github.com/Raven-V1/Countersign`. `python -m countersign init` writes a starter `countersign.yaml`, `.leak-baseline.json`, the pre-commit hook, a GitHub Action and `records/.gitkeep` into any repo, and never approves the rules itself.
+- **Z opt-in.** Without `ZOS_USS_DIR`, runs record `z_status=not_configured` and are not blocked. `COUNTERSIGN_REQUIRE_Z=1` makes Z mandatory (this repo sets it). `init --z` adds the `zos/` files.
+- **`.gitattributes` block.** `init` writes a marked block that keeps hashed files byte-exact on Windows clones with `core.autocrlf=true`; lines outside the block are left alone.
+- **Connect a repo / Upload records.** The dashboard sidebar loads any public GitHub repo's records (owner/repo or URL, plus branch), or uploaded record files for a private repo, and verifies the chain. Read-only, session only, nothing stored.
+- **watsonx explanations view.** A dashboard view listing the saved `plain_english` explanations, scoped to this run or all runs, with status and rule filters and a search box.
+- **Run labels.** Each run is labelled by run number, date, outcome (with warnings) and short commit hash.
+- **`dashboard --repo`.** `python -m countersign dashboard --repo PATH` shows another local repo's `records/`.
+
+---
+
 ## Open Items
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | Zowe profile name | TBD — run `zowe config profiles` |
-| 2 | `ZOS_HLQ` value | In `.env`; never committed |
-| 3 | USS Python path | TBD — discovered in Phase 5.0 probe |
-| 4 | Streamlit Community Cloud account | Needed for Phase 2 deploy |
-| 5 | `bandit`, `detect-secrets`, `ruff` installable | Confirm with `pip install bandit detect-secrets ruff` |
+| 1 | Zowe profile name | Resolved: default `zosmf` profile (see 5.0) |
+| 2 | `ZOS_HLQ` value | Not used: the job works in USS (`ZOS_USS_DIR`), not in datasets |
+| 3 | USS Python path | Resolved: `/usr/lpp/IBM/cyp/v3r9/pyz/bin/python3` (see 5.0) |
+| 4 | Streamlit Community Cloud account | Resolved: deployed at https://countersign.streamlit.app/ |
+| 5 | `bandit`, `detect-secrets`, `ruff` installable | Resolved: installed locally and in CI |
 
 ---
 
