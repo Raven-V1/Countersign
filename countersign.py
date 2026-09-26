@@ -275,6 +275,7 @@ def write_record(
     z_status: str | None,
     z_job_id: str | None,
     z_rc: int | None,
+    wx_model_id: str = "",
 ) -> Path:
     RECORDS_DIR.mkdir(exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -290,6 +291,7 @@ def write_record(
         "z_status": z_status,
         "z_job_id": z_job_id,
         "z_rc": z_rc,
+        "wx_model_id": wx_model_id,
         "results": results,
     }
     filename.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -329,13 +331,27 @@ def cmd_run(skip_z: bool) -> int:
     scannable_files = get_staged_scannable_files()
 
     print("Running Countersign checks…")
+
+    # 1. Run checks
     results = run_checks(rules, staged_files, scannable_files)
 
+    # 2. Compute gate outcome — watsonx must never influence this
     blocking = collect_blocking(rules, results)
     outcome = "BLOCKED" if blocking else "PASS"
 
-    # Phase 3: watsonx plain-English explanations wired here
-    # (no-op until wx_explain module is added)
+    # 3. Phase 3: watsonx plain-English explanations (fail-soft)
+    wx_model_id = ""
+    try:
+        from wx_explain import explain_failures  # local import keeps it optional
+        explanations, wx_model_id = explain_failures(results, rules)
+    except Exception:  # noqa: BLE001
+        explanations = {}
+
+    # 4. Fill plain_english into results (display-only; does not touch status)
+    for res in results:
+        expl = explanations.get(res["id"], "")
+        if expl:
+            res["plain_english"] = expl
 
     # Z approval (Phase 5 — stub)
     ci_mode = os.getenv("CI", "").lower() in ("true", "1", "yes")
@@ -346,7 +362,8 @@ def cmd_run(skip_z: bool) -> int:
     else:
         z_status = "not_implemented"  # Phase 5 will wire real Z approval
 
-    record_path = write_record(results, outcome, z_status, None, None)
+    # 5. Write record (chain hash is prev_fingerprint() inside write_record)
+    record_path = write_record(results, outcome, z_status, None, None, wx_model_id)
     print_summary(rules, results, record_path)
 
     if blocking:
@@ -357,6 +374,9 @@ def cmd_run(skip_z: bool) -> int:
             if b["output"]:
                 for line in b["output"].splitlines()[:5]:
                     print(f"        {line}")
+            plain = b.get("plain_english", "").strip()
+            if plain:
+                print(f"        → {plain}")
             print()
         return 1
 
