@@ -26,7 +26,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install dependencies
-        run: pip install pyyaml python-dotenv bandit detect-secrets ruff pytest
+        run: pip install -r requirements.txt
 
       - name: Verify Bob rules are in sync
         run: python scripts/generate_bob_rules.py --check
