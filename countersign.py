@@ -146,6 +146,11 @@ def get_staged_files() -> list[str]:
     return [f for f in out.splitlines() if f]
 
 
+def _filter_existing(paths: list[str]) -> list[str]:
+    """Return only paths that exist on disk as files."""
+    return [p for p in paths if Path(p).is_file()]
+
+
 def get_staged_scannable_files() -> list[str]:
     """Staged files that exist on disk (Added/Copied/Modified only).
 
@@ -153,7 +158,16 @@ def get_staged_scannable_files() -> list[str]:
     Used as arguments to SEC-002 (detect-secrets).
     """
     _, out = _run("git diff --cached --name-only --diff-filter=ACM")
-    return [f for f in out.splitlines() if f]
+    return _filter_existing([f for f in out.splitlines() if f])
+
+
+def get_all_scannable_files() -> list[str]:
+    """All tracked and untracked-but-not-ignored files that exist on disk.
+
+    Used by cmd_check so SEC-002 has files to scan even when nothing is staged.
+    """
+    _, out = _run("git ls-files --cached --others --exclude-standard")
+    return _filter_existing([f for f in out.splitlines() if f])
 
 
 def get_staged_diff() -> str:
@@ -184,6 +198,7 @@ def run_checks(
     rules: list[dict],
     staged_files: list[str],
     scannable_files: list[str] | None = None,
+    sec002_empty_msg: str = "0 files staged — skipped.",
 ) -> list[dict]:
     results = []
     for rule in rules:
@@ -214,7 +229,7 @@ def run_checks(
                         "id": rid,
                         "status": "UNVERIFIED",
                         "check": check_cmd,
-                        "output": "0 files staged — skipped.",
+                        "output": sec002_empty_msg,
                         "plain_english": "",
                     }
                 )
@@ -398,13 +413,24 @@ def cmd_check() -> int:
       security FAIL/UNVERIFIED or functional FAIL -> exit 1
       quality FAIL -> warning only, exit 0
     """
+    import sys as _sys
+    if hasattr(_sys.stdout, "reconfigure"):
+        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(_sys.stderr, "reconfigure"):
+        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     rules = load_rules()
     staged_files = get_staged_files()
-    scannable_files = get_staged_scannable_files()
+    scannable_files = get_all_scannable_files()
 
     print("Checking requirements (read-only, no record written)…")
 
-    results = run_checks(rules, staged_files, scannable_files)
+    results = run_checks(
+        rules,
+        staged_files,
+        scannable_files,
+        sec002_empty_msg="0 files found — skipped.",
+    )
     blocking = collect_blocking(rules, results)
 
     print_summary(rules, results, record_path=None)
