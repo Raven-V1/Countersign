@@ -1,0 +1,79 @@
+# ============================================================
+# countersign.yaml — Countersign project's own rules
+# Human-owned. Never modify without running:
+#   python countersign.py approve-rules
+# ============================================================
+#
+# Schema per entry:
+#   id:           unique string (PREFIX-NNN)
+#   requirement:  plain-language description
+#   priority:     security | functional | quality
+#   check:        shell command (empty string = always UNVERIFIED)
+#   paths:        list of glob patterns this rule watches
+#   ai_access:    none | read | edit
+#   protect:      true = changes to this file require approve-rules
+#
+# Blocking policy enforced by countersign.py:
+#   security FAIL or UNVERIFIED  -> commit BLOCKED
+#   functional FAIL              -> commit BLOCKED
+#   quality FAIL                 -> warning only, commit proceeds
+#
+# A check with no 'check' field is UNVERIFIED -- never PASS.
+# ============================================================
+
+- id: SEC-001
+  requirement: No medium or high severity issues found by bandit in Python code
+  priority: security
+  check: "bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q"
+  paths:
+    - "**/*.py"
+  ai_access: read
+
+- id: SEC-002
+  requirement: No high-entropy strings or known key patterns in staged files
+  priority: security
+  check: "detect-secrets-hook --baseline .leak-baseline.json"
+  paths:
+    - "**/*"
+  ai_access: read
+
+- id: SEC-003
+  requirement: countersign.yaml has not been silently modified since last approval
+  priority: security
+  check: "python countersign.py verify-rules"
+  paths:
+    - "countersign.yaml"
+  ai_access: none
+  protect: true
+
+- id: SEC-004
+  requirement: Evidence record chain is intact (no record has been tampered with)
+  priority: security
+  check: "python countersign.py verify-chain"
+  paths:
+    - "records/*.json"
+  ai_access: none
+
+- id: FUNC-001
+  requirement: All pytest tests in demo_app/ pass
+  priority: functional
+  check: "pytest demo_app/ -q --tb=short"
+  paths:
+    - "demo_app/**/*.py"
+  ai_access: edit
+
+- id: FUNC-002
+  requirement: countersign.py is present and has valid Python syntax
+  priority: functional
+  check: "python -m py_compile countersign.py"
+  paths:
+    - "countersign.py"
+  ai_access: edit
+
+- id: QUAL-001
+  requirement: Python source files pass ruff style checks
+  priority: quality
+  check: "ruff check ."
+  paths:
+    - "**/*.py"
+  ai_access: edit
