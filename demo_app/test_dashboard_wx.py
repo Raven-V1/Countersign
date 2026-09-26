@@ -362,15 +362,30 @@ def test_empty_state(run_app):
 # ---------------------------------------------------------------------------
 
 
-def test_logo_present_and_missing(run_app, tmp_path):
-    at = run_app(_records())
-    assert at.sidebar.get("imgs"), "logo image expected in the sidebar"
+def test_logo_present_and_missing(run_app, tmp_path, monkeypatch):
+    # Record image calls directly: AppTest's element naming for images differs
+    # between Streamlit versions (e.g. 1.57 vs 1.64).
+    from streamlit.delta_generator import DeltaGenerator
 
+    images: list[tuple[str, object]] = []
+    real_image = DeltaGenerator.image
+
+    def spy(self, image, *a, **kw):
+        images.append((str(image), kw.get("width")))
+        return real_image(self, image, *a, **kw)
+
+    monkeypatch.setattr(DeltaGenerator, "image", spy)
+
+    at = run_app(_records())
+    assert images == [(str(_REPO / "dashboard" / "assets" / "belvenar_logo.png"), 130)]
+    assert not at.exception
+
+    images.clear()
     bare = tmp_path / "bare_dashboard"
     bare.mkdir()
     shutil.copy(_APP, bare / "app.py")  # no assets/ next to it
     at = run_app(_records(), app=bare / "app.py")
-    assert not at.sidebar.get("imgs")
+    assert images == []
     assert len(at.dataframe[0].value) == 3
 
 
