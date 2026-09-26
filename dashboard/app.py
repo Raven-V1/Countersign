@@ -12,6 +12,12 @@ import pandas as pd
 import streamlit as st
 import yaml
 
+try:
+    import countersign_connect as connect
+except ModuleNotFoundError:  # running from the repo: countersign_connect.py is one level up
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import countersign_connect as connect
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -302,9 +308,10 @@ _NOTIF_VARIANTS: dict[str, tuple[str, str, str, str]] = {
 }
 
 
-def _notif_html(status: str, msg: str) -> str:
-    """Return a Carbon inline-notification HTML block. msg is escaped internally."""
-    variant, svg, icon_col, title = _NOTIF_VARIANTS.get(status, _NOTIF_VARIANTS["UNVERIFIED"])
+def _notif_html(status: str, msg: str, title: str | None = None) -> str:
+    """Return a Carbon inline-notification HTML block. msg and title are escaped internally."""
+    variant, svg, icon_col, default_title = _NOTIF_VARIANTS.get(status, _NOTIF_VARIANTS["UNVERIFIED"])
+    title     = html.escape(title) if title is not None else default_title
     safe_msg  = html.escape(msg)
     return (
         f'<div class="cs-notif cs-notif--{variant}">'
@@ -381,12 +388,78 @@ st.html(_CSS)
 
 st.title("Countersign Dashboard")
 
-# --- Carbon chain-status notification ---
-chain_status, chain_msg = run_verify_chain()
-st.html(_notif_html(chain_status, chain_msg))
+# ---------------------------------------------------------------------------
+# Sidebar: view another repo's records (session only, nothing stored)
+# ---------------------------------------------------------------------------
+_SOURCE_KEY = "cs_source"
 
-records = load_records(str(RECORDS_DIR))
-rules   = load_rules(str(RULES_FILE))
+with st.sidebar:
+    st.header("Connect a repo")
+    repo_in = st.text_input(
+        "GitHub repo", placeholder="owner/repo or https://github.com/owner/repo", key="cs_repo"
+    )
+    branch_in = st.text_input("Branch", value="main", key="cs_branch")
+    if st.button("Connect", key="cs_connect"):
+        try:
+            owner, repo, branch = connect.parse_repo(repo_in, branch_in)
+        except connect.LoadError as exc:
+            st.error(str(exc))
+        else:
+            with st.spinner(f"Downloading {owner}/{repo}@{branch} …"):
+                st.session_state[_SOURCE_KEY] = connect.load_github(owner, repo, branch)
+    st.caption(
+        "Public repos only. Records are downloaded into memory for this session and never stored."
+    )
+
+    st.header("Upload records")
+    uploads = st.file_uploader(
+        "Record files (.json)", type=["json"], accept_multiple_files=True, key="cs_uploads"
+    )
+    rules_upload = st.file_uploader(
+        "countersign.yaml (optional)", type=["yaml", "yml"], key="cs_rules_upload"
+    )
+    if st.button("Verify uploads", key="cs_verify_uploads", disabled=not uploads):
+        st.session_state[_SOURCE_KEY] = connect.load_uploads(
+            [(u.name, u.getvalue()) for u in uploads],
+            rules_upload.getvalue() if rules_upload else None,
+        )
+    st.caption("For private repos. Uploads stay in this session only.")
+
+# ---------------------------------------------------------------------------
+# Data source: this repo (default) or a connected/uploaded one (untrusted)
+# ---------------------------------------------------------------------------
+source = st.session_state.get(_SOURCE_KEY)
+untrusted = source is not None
+
+if source is None:
+    # --- Carbon chain-status notification ---
+    chain_status, chain_msg = run_verify_chain()
+    st.html(_notif_html(chain_status, chain_msg))
+
+    records = load_records(str(RECORDS_DIR))
+    rules   = load_rules(str(RULES_FILE))
+else:
+    st.html(
+        f'<div class="cs-banner" style="padding:12px 16px;margin-bottom:8px;'
+        f'background:{C_LAYER2};color:{C_TEXT}">Viewing '
+        f'<code>{html.escape(source["label"])}</code></div>'
+    )
+    if st.button("Disconnect", key="cs_disconnect"):
+        del st.session_state[_SOURCE_KEY]
+        st.rerun()
+    if source["error"]:
+        st.html(_notif_html(
+            "UNVERIFIED", source["error"], title=f"UNVERIFIED: could not load {source['label']}"
+        ))
+        st.stop()
+    chain_status, chain_msg = source["chain"]
+    st.html(_notif_html(chain_status, chain_msg))
+    st.caption(
+        "Z Approval shows what the records say. The Z ledger (approved.log on z/OS) "
+        "can't be audited from the dashboard."
+    )
+    records = source["records"]
+    rules   = source["rules"] or []
 
 # ---------------------------------------------------------------------------
 # Timeline table (newest first)
@@ -394,7 +467,10 @@ rules   = load_rules(str(RULES_FILE))
 st.subheader("Run Timeline")
 
 if not records:
-    st.info("No records found. Run `python -m countersign run` to create the first record.")
+    if untrusted:
+        st.info("No readable records.")
+    else:
+        st.info("No records found. Run `python -m countersign run` to create the first record.")
     st.stop()
 
 def _outcome_label(rec: dict, priority_map: dict[str, str]) -> str:
@@ -437,9 +513,11 @@ selected_idx = st.dataframe(
     hide_index=True,
     on_select="rerun",
     selection_mode="single-row",
+    # Per-source key: a row picked in one source must not index into another.
+    key=f"cs_timeline:{source['label']}" if untrusted else "cs_timeline",
 ).selection.rows
 
-if not selected_idx:
+if not selected_idx or selected_idx[0] >= len(records):
     st.info("Select a record above to inspect its rules.")
     st.stop()
 
@@ -451,7 +529,12 @@ selected_rec = records[selected_idx[0]]
 outcome = selected_rec.get("outcome", "—")
 safe_fname = html.escape(selected_rec["_filename"])
 
-st.markdown(f"### Record: `{safe_fname}`")
+if untrusted:
+    # File names from a connected repo or upload are shown as plain text only.
+    st.subheader("Record")
+    st.code(selected_rec["_filename"], language=None)
+else:
+    st.markdown(f"### Record: `{safe_fname}`")
 st.html(
     f'<div style="margin-bottom:16px">'
     f'Outcome:&nbsp;{_tag(outcome)}&nbsp;&nbsp;'
@@ -470,6 +553,10 @@ results_by_id = {r["id"]: r for r in selected_rec.get("results", [])}
 # ---------------------------------------------------------------------------
 # Rules — security first, then functional, then quality
 # ---------------------------------------------------------------------------
+if untrusted and not rules:
+    st.caption("No usable countersign.yaml in this source, so the requirements panel is hidden.")
+    st.stop()
+
 st.subheader("Requirements")
 
 current_priority = None
@@ -501,7 +588,11 @@ for rule in rules:
             if result:
                 plain = (result.get("plain_english") or "").strip()
                 if plain:
-                    st.info(plain)
+                    if untrusted:
+                        # Untrusted text: never markdown or HTML.
+                        st.text(plain)
+                    else:
+                        st.info(plain)
                 raw_out = (result.get("output") or "").strip()
                 if raw_out:
                     st.code(raw_out, language="text")

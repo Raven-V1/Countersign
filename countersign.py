@@ -764,24 +764,31 @@ def cmd_verify_rules() -> int:
     return 1
 
 
-def cmd_verify_chain() -> int:
-    files = sorted(RECORDS_DIR.glob("*.json"))
+def verify_chain_bytes(files: list[tuple[str, bytes]]) -> tuple[str, str]:
+    """Verify a record chain from (file name, raw bytes) pairs.
+
+    Pure: no filesystem, no subprocess. Files are checked in name order.
+    Returns ("PASS" | "FAIL", message).
+    """
+    files = sorted(files, key=lambda f: f[0])
     if not files:
-        print("PASS: No records yet — chain is trivially intact (genesis).")
-        return 0
+        return "PASS", "No records yet — chain is trivially intact (genesis)."
 
     prev_fp = "genesis"
-    for f in files:
-        raw_bytes = f.read_bytes()
-        record = json.loads(raw_bytes.decode("utf-8"))
+    for name, raw_bytes in files:
+        try:
+            record = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            return "FAIL", f"Record {name} is not valid UTF-8 JSON ({exc})"
+        if not isinstance(record, dict):
+            return "FAIL", f"Record {name} is not a JSON object"
         stored_prev = record.get("prev_record_fingerprint", "")
         if stored_prev != prev_fp:
-            print(
-                f"FAIL: Chain broken at record {f.name}\n"
+            return "FAIL", (
+                f"Chain broken at record {name}\n"
                 f"  Expected prev_fingerprint: {prev_fp}\n"
                 f"  Stored  prev_fingerprint:  {stored_prev}"
             )
-            return 1
 
         # For Z-approved records, verify the pre-Z hash hasn't been tampered.
         # Reconstruct the record as it was before _update_record_z wrote it back.
@@ -794,17 +801,22 @@ def cmd_verify_chain() -> int:
             pre_z["z_verified_hash"] = None
             recon_hash = sha256_bytes(json.dumps(pre_z, indent=2).encode("utf-8"))
             if recon_hash != zvh:
-                print(
-                    f"FAIL: z_verified_hash mismatch at {f.name}\n"
+                return "FAIL", (
+                    f"z_verified_hash mismatch at {name}\n"
                     f"  Stored z_verified_hash: {zvh}\n"
                     f"  Reconstructed hash:     {recon_hash}"
                 )
-                return 1
 
         prev_fp = sha256_bytes(raw_bytes)
 
-    print(f"PASS: Chain intact across {len(files)} record(s).")
-    return 0
+    return "PASS", f"Chain intact across {len(files)} record(s)."
+
+
+def cmd_verify_chain() -> int:
+    files = [(f.name, f.read_bytes()) for f in RECORDS_DIR.glob("*.json")]
+    status, message = verify_chain_bytes(files)
+    print(f"{status}: {message}")
+    return 0 if status == "PASS" else 1
 
 
 # Required top-level keys every proposed rule entry must contain.

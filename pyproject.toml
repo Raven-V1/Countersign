@@ -24,7 +24,7 @@ dashboard = ["streamlit>=1.35", "pandas>=2.0"]
 countersign = "countersign:main"
 
 [tool.setuptools]
-py-modules = ["countersign", "wx_explain"]
+py-modules = ["countersign", "wx_explain", "countersign_connect"]
 # dashboard/ and zos/ ship under prefixed names so the installed tree does not
 # claim generic top-level names; the repo layout stays as it is.
 packages = ["countersign_templates", "countersign_dashboard", "countersign_zos"]

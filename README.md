@@ -133,6 +133,9 @@ Countersign's is never replaced without `--force`.
   `ZOS_USS_DIR` is missing.
 - **Dashboard**: `pip install "countersign[dashboard] @ git+https://github.com/Raven-V1/Countersign"`,
   then `python -m countersign dashboard` from the repo root.
+  In the sidebar, **Connect a repo** loads any public GitHub repo's records
+  (owner/repo or URL, plus branch) and verifies the chain; **Upload records**
+  does the same for a private repo. Both stay in your session and nothing is stored.
 
 Settings live in `countersign.yaml`, not in the dashboard, on purpose: a
 settings UI would bypass the `approve-rules` human gate.
