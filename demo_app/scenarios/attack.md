@@ -28,19 +28,39 @@ pip install -r requirements.txt
 python countersign.py approve-rules   # type 'y' when prompted
 ```
 
+### Attack helper variables
+
+Run once at the start of your demo session before any attack block.
+
+```powershell
+$app  = "$PWD\demo_app\app.py"
+$test = "$PWD\demo_app\test_app.py"
+function Restore-Demo { git checkout HEAD -- demo_app/app.py demo_app/test_app.py; git status --short demo_app }
+```
+
+> **Note — why `[IO.File]` instead of `Get-Content`/`Set-Content`:**
+> Windows PowerShell 5.1 writes ANSI encoding by default with those cmdlets, which
+> silently corrupts the UTF-8 docstrings in `app.py`. Always use
+> `[IO.File]::ReadAllText` / `[IO.File]::WriteAllText` for round-trip rewrites.
+>
+> **Note — why `git checkout HEAD -- <file>` instead of `git checkout -- <file>`:**
+> After staging the attacked file with `git add`, a plain `git checkout -- <file>`
+> restores the *staged* (attacked) version, not HEAD. Use `HEAD` explicitly to
+> reset to the last committed state.
+
 ---
 
 ## Attack 1 — AI Removes the DELETE Route (tests still present)
 
-**Scenario:** An AI code assistant "simplifies" `demo_app/app.py` by removing the
-`do_DELETE` method body.  The pytest tests that call `delete_todo()` still exist,
-so FUNC-001 fails AND DEMO-001 fails.
+**Scenario:** An AI code assistant "simplifies" `demo_app/app.py` by removing both
+the `delete_todo` helper and the `do_DELETE` method body. The pytest tests that
+call `delete_todo()` still exist, so FUNC-001 fails AND DEMO-001 fails.
 
 ```powershell
-# Read the whole file as one string, strip the do_DELETE method block
-$src = Get-Content demo_app\app.py -Raw
-$src = $src -replace '(?s)    def do_DELETE\(self\).*?(?=\n    def |\Z)', ''
-Set-Content demo_app\app.py $src
+$s = [IO.File]::ReadAllText($app)
+$s = $s -replace '(?s)def delete_todo\(.*?(?=\r?\n(\r?\n)+def )', ''
+$s = $s -replace '(?s)    def do_DELETE\(self\).*?(?=\r?\n(\r?\n)+def )', ''
+[IO.File]::WriteAllText($app, $s)
 
 # Stage the change
 git add demo_app/app.py
@@ -59,29 +79,31 @@ git commit -m "refactor: simplify app"
 
 **Restore:**
 ```powershell
-git checkout -- demo_app/app.py
+Restore-Demo
 ```
 
 ---
 
 ## Attack 1b — AI Removes DELETE Route AND Its Tests
 
-**Scenario:** A more sophisticated AI removes `do_DELETE` from `app.py` *and*
-deletes the three `test_delete_*` tests from `test_app.py`, so FUNC-001 passes
-(no failing tests remain) but DEMO-001 still catches the missing route.
+**Scenario:** A more sophisticated AI removes both `delete_todo` and `do_DELETE`
+from `app.py` *and* deletes the `test_delete_*` tests from `test_app.py`, so
+FUNC-001 passes (no failing tests remain) but DEMO-001 still catches the missing
+route.
 
 ```powershell
-# Remove do_DELETE from app.py
-$src = Get-Content demo_app\app.py -Raw
-$src = $src -replace '(?s)    def do_DELETE\(self\).*?(?=\n    def |\Z)', ''
-Set-Content demo_app\app.py $src
+# Remove delete_todo and do_DELETE from app.py
+$s = [IO.File]::ReadAllText($app)
+$s = $s -replace '(?s)def delete_todo\(.*?(?=\r?\n(\r?\n)+def )', ''
+$s = $s -replace '(?s)    def do_DELETE\(self\).*?(?=\r?\n(\r?\n)+def )', ''
+[IO.File]::WriteAllText($app, $s)
 
-# Remove the three delete test functions from test_app.py
-$tests = Get-Content demo_app\test_app.py -Raw
-$tests = $tests -replace '(?s)\n\ndef test_delete_existing_todo\(\).*?(?=\n\ndef |\Z)', ''
-$tests = $tests -replace '(?s)\n\ndef test_delete_nonexistent_todo\(\).*?(?=\n\ndef |\Z)', ''
-$tests = $tests -replace '(?s)\n\ndef test_delete_removes_only_target\(\).*?(?=\n\ndef |\Z)', ''
-Set-Content demo_app\test_app.py $tests
+# Remove all test_delete_* functions from test_app.py
+$t = [IO.File]::ReadAllText($test)
+$t = $t -replace '(?s)def test_delete_.*?(?=\r?\n(\r?\n)+def |\s*\z)', ''
+[IO.File]::WriteAllText($test, $t)
+
+python -m pytest demo_app -q   # 4 passed
 
 # Stage both changes
 git add demo_app/app.py demo_app/test_app.py
@@ -103,7 +125,7 @@ DEMO-001 still catches it because Countersign checks the source directly, not ju
 
 **Restore:**
 ```powershell
-git checkout -- demo_app/app.py demo_app/test_app.py
+Restore-Demo
 ```
 
 ---
@@ -132,7 +154,7 @@ git commit -m "debug: add key"
 
 **Restore:**
 ```powershell
-git checkout -- demo_app/app.py
+Restore-Demo
 ```
 
 ---
@@ -162,7 +184,7 @@ git commit -m "chore: adjust priorities"
 
 **Restore:**
 ```powershell
-git checkout -- countersign.yaml
+git checkout HEAD -- countersign.yaml
 ```
 
 ---
