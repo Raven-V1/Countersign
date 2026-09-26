@@ -91,6 +91,10 @@
       "path": "detect_secrets.filters.allowlist.is_line_allowlisted"
     },
     {
+      "path": "detect_secrets.filters.common.is_baseline_file",
+      "filename": ".leak-baseline.json"
+    },
+    {
       "path": "detect_secrets.filters.common.is_ignored_due_to_verification_policies",
       "min_level": 2
     },
@@ -120,8 +124,26 @@
     },
     {
       "path": "detect_secrets.filters.heuristic.is_templated_secret"
+    },
+    {
+      "path": "detect_secrets.filters.regex.should_exclude_file",
+      "pattern": [
+        "^records",
+        "^\\.countersign"
+      ]
     }
   ],
-  "results": {},
-  "generated_at": "2026-09-26T06:29:48Z"
+  "results": {
+    "SECURITY.MD": [
+      {
+        "type": "Secret Keyword",
+        "filename": "SECURITY.MD",
+        "hashed_secret": "1d278c7a5057bac15828468f030f52f07caf70bb",
+        "is_verified": false,
+        "line_number": 38,
+        "is_secret": false
+      }
+    ]
+  },
+  "generated_at": "2026-09-26T18:03:56Z"
 }

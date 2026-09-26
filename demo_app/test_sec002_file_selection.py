@@ -170,6 +170,45 @@ def test_cmd_check_passes_on_clean_file(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# U2: SEC-002 FAIL on a file that starts with a non-ASCII character (emoji)
+#     followed by a fake key — verifies PYTHONUTF8=1 is in effect so
+#     detect-secrets does not silently skip the file on Windows.
+#     This test WOULD FAIL if U1 (PYTHONUTF8 env var in _run) were reverted:
+#     without it, detect-secrets on Windows reads the file as cp1252, hits a
+#     decode error on the emoji byte sequence, and skips the file entirely,
+#     causing SEC-002 to exit 0 and appear PASS when it should be FAIL.
+# ---------------------------------------------------------------------------
+
+
+def test_sec002_detects_key_in_utf8_file(tmp_path, monkeypatch):
+    """SEC-002 FAIL on a file with a non-ASCII (emoji) header line + fake key.
+
+    The emoji forces UTF-8-only bytes into the file.  Without PYTHONUTF8=1,
+    detect-secrets on Windows silently skips the file and returns exit 0,
+    which would register as PASS.  With PYTHONUTF8=1 it reads correctly,
+    finds the key, and exits 1 (FAIL).
+    """
+    cross_mark = chr(0x274C)  # ❌ — non-ASCII, triggers cp1252 decode failure
+    content = f"{cross_mark} do not commit secrets\nKEY = \"{_fake_key()}\"\n"
+    _setup_sec002_repo(tmp_path, monkeypatch, content)
+
+    rules = countersign.load_rules()
+    all_files = countersign.get_all_scannable_files()
+    results = countersign.run_checks(rules, staged_files=[], scannable_files=all_files)
+    sec002 = next(r for r in results if r["id"] == "SEC-002")
+    print(f"\n[test_sec002_detects_key_in_utf8_file] SEC-002 output: {sec002['output']!r}")
+
+    assert sec002["status"] == "FAIL", (
+        f"SEC-002 must be FAIL even when file starts with non-ASCII characters. "
+        f"Got {sec002['status']!r}. If PASS, PYTHONUTF8=1 is likely missing from _run. "
+        f"Output: {sec002['output']}"
+    )
+
+    rc = countersign.cmd_check()
+    assert rc == 1, f"cmd_check must return 1, got {rc}"
+
+
+# ---------------------------------------------------------------------------
 # F3-c: cmd_run records SEC-002 UNVERIFIED when nothing is staged
 # ---------------------------------------------------------------------------
 

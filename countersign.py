@@ -82,6 +82,7 @@ def _run(cmd: str, extra_args: list[str] | None = None) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env={**os.environ, "PYTHONUTF8": "1"},
         )
     except FileNotFoundError as exc:
         return -1, f"Command not found: {exc}"
