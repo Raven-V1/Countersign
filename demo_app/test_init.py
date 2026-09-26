@@ -8,6 +8,8 @@ Covers:
   INIT-4. Refuses outside a repo root (subdirectory, and no repo at all).
   INIT-5. An existing non-Countersign hook is not overwritten without --force.
   INIT-6. --z also writes zos/VERIFY.jcl and zos/verify_record.py.
+  INIT-7. .gitattributes: created fresh; appended to an existing file with its
+          own lines untouched; second run skips; --force replaces only the block.
 
 Each test runs in its own `git init` tmp dir. detect-secrets runs for real
 (local scan, no network); approve-rules is never called.
@@ -32,7 +34,17 @@ _FILES = (
     ".git/hooks/pre-commit",
     ".github/workflows/countersign.yml",
     "records/.gitkeep",
+    ".gitattributes",
 )
+_BLOCK = (
+    "# BEGIN countersign\n"
+    "countersign.yaml     text eol=lf\n"
+    "records/*.json       binary\n"
+    ".countersign/*       binary\n"
+    ".leak-baseline.json  binary\n"
+    "# END countersign\n"
+)
+
 
 
 @pytest.fixture
@@ -101,7 +113,8 @@ def test_force_overwrites(repo, capsys):
     (repo / "countersign.yaml").write_text("# mine\n", encoding="utf-8")
     rc, out = _init(capsys, force=True)
     assert rc == 0, out
-    assert out.count("overwritten") == len(_FILES)
+    assert out.count("overwritten") == len(_FILES) - 1  # .gitattributes: block replaced
+    assert "block replaced" in out
     assert "SEC-001" in (repo / "countersign.yaml").read_text(encoding="utf-8")
 
 
@@ -149,3 +162,34 @@ def test_init_with_z(repo, capsys):
         written = (repo / "zos" / name).read_bytes()
         assert written == (_REPO / "zos" / name).read_bytes().replace(b"\r\n", b"\n")
     assert "ZOS_USS_DIR" in out
+
+
+def test_gitattributes_created(repo, capsys):
+    rc, out = _init(capsys)
+    assert rc == 0, out
+    assert (repo / ".gitattributes").read_bytes() == _BLOCK.encode()
+    assert ".gitattributes" in out.split("Next steps")[1]  # in the git add line
+
+
+def test_gitattributes_appended_then_skipped(repo, capsys):
+    own = b"*.png binary\ndocs/* text eol=crlf"  # no trailing newline
+    (repo / ".gitattributes").write_bytes(own)
+    rc, out = _init(capsys)
+    assert rc == 0, out
+    assert "appended" in out
+    assert (repo / ".gitattributes").read_bytes() == own + b"\n" + _BLOCK.encode()
+
+    rc, out = _init(capsys)
+    assert ".gitattributes" in out and "block present" in out
+    assert (repo / ".gitattributes").read_bytes() == own + b"\n" + _BLOCK.encode()
+
+
+def test_gitattributes_force_replaces_only_block(repo, capsys):
+    before, after = b"*.png binary\n", b"*.sh text eol=lf\n"
+    stale = b"# BEGIN countersign\nold-line binary\n# END countersign\n"
+    (repo / ".gitattributes").write_bytes(before + stale + after)
+    _init(capsys)  # no --force: stale block kept
+    assert b"old-line" in (repo / ".gitattributes").read_bytes()
+    rc, out = _init(capsys, force=True)
+    assert rc == 0, out
+    assert (repo / ".gitattributes").read_bytes() == before + _BLOCK.encode() + after

@@ -1121,6 +1121,47 @@ def _write_file(path: Path, data: bytes, force: bool) -> str:
     return "overwritten" if existed else "created"
 
 
+_GITATTR_BEGIN = "# BEGIN countersign"
+_GITATTR_END = "# END countersign"
+_GITATTR_LINES = (
+    "countersign.yaml     text eol=lf",
+    "records/*.json       binary",
+    ".countersign/*       binary",
+    ".leak-baseline.json  binary",
+)
+
+
+def _write_gitattributes(path: Path, force: bool) -> str:
+    """Create .gitattributes or maintain a marked Countersign block in it.
+
+    Hashed files must keep exact bytes on clones with core.autocrlf=true.
+    Lines outside the BEGIN/END block are never changed; --force replaces
+    only the block.
+    """
+    if not path.exists():
+        block = "\n".join((_GITATTR_BEGIN, *_GITATTR_LINES, _GITATTR_END)) + "\n"
+        path.write_bytes(block.encode("utf-8"))
+        return "created"
+
+    text = path.read_bytes().decode("utf-8")
+    nl = "\r\n" if "\r\n" in text else "\n"
+    block = nl.join((_GITATTR_BEGIN, *_GITATTR_LINES, _GITATTR_END))
+    start = text.find(_GITATTR_BEGIN)
+    end = text.find(_GITATTR_END, start) if start != -1 else -1
+    if start != -1 and end != -1:
+        if not force:
+            return "skipped (countersign block present; --force to replace)"
+        text = text[:start] + block + text[end + len(_GITATTR_END):]
+        status = "block replaced"
+    else:
+        if text and not text.endswith("\n"):
+            text += nl
+        text += block + nl
+        status = "appended"
+    path.write_bytes(text.encode("utf-8"))
+    return status
+
+
 def _leak_baseline() -> bytes | None:
     """Run detect-secrets scan (git-tracked files) and return the baseline JSON."""
     result = subprocess.run(
@@ -1184,6 +1225,7 @@ def cmd_init(force: bool, with_z: bool) -> int:
         _resource_bytes("countersign_templates", "countersign.yml", "countersign_templates"),
     )
     put(RECORDS_DIR / ".gitkeep", b"")
+    report.append((".gitattributes", _write_gitattributes(Path(".gitattributes"), force)))
 
     if with_z:
         for name in ("VERIFY.jcl", "verify_record.py"):
@@ -1211,7 +1253,7 @@ def cmd_init(force: bool, with_z: bool) -> int:
         "  1. Edit countersign.yaml (set FUNC-001 to your test command), then approve it yourself:\n"
         "       python -m countersign approve-rules\n"
         "  2. Stage the Countersign files:\n"
-        "       git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep\n"
+        "       git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep .gitattributes\n"
         "  3. Commit; the pre-commit hook gates this and every later commit:\n"
         '       git commit -m "Add Countersign"'
     )

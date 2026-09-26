@@ -104,7 +104,7 @@ pip install git+https://github.com/Raven-V1/Countersign
 cd your-repo                        # must be the git repo root
 python -m countersign init          # writes the files below; never approves
 python -m countersign approve-rules # you do this, after reading countersign.yaml
-git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep
+git add countersign.yaml .countersign .leak-baseline.json .github records/.gitkeep .gitattributes
 git commit -m "Add Countersign"     # the hook gates this and every later commit
 ```
 
@@ -112,8 +112,11 @@ git commit -m "Add Countersign"     # the hook gates this and every later commit
 approval, record chain, an empty FUNC-001 for your test command, ruff), a
 `.leak-baseline.json` from `detect-secrets scan`, the pre-commit hook, a
 GitHub Action that installs Countersign from this repo and runs
-`python -m countersign ci`, and `records/.gitkeep`. Existing files are
-skipped unless you pass `--force`; an existing pre-commit hook that is not
+`python -m countersign ci`, `records/.gitkeep`, and a marked block in
+`.gitattributes` that keeps the hashed files (`countersign.yaml`, records,
+the approval hash, the leak baseline) byte-exact on Windows clones with
+`core.autocrlf=true`; lines outside the block are never touched. Existing
+files are skipped unless you pass `--force`; an existing pre-commit hook that is not
 Countersign's is never replaced without `--force`.
 
 - **FUNC-001** starts with an empty check, so it is UNVERIFIED until you set
@@ -136,10 +139,7 @@ settings UI would bypass the `approve-rules` human gate.
 
 Rough edges: tested on Python 3.14 only (Windows locally, Ubuntu in CI); the
 Z verifier identifies security rules by the `SEC-` prefix, so security rule
-ids must start with it; with `core.autocrlf=true` on Windows, mark
-`countersign.yaml`, `records/*.json`, `.countersign/*`, and
-`.leak-baseline.json` in `.gitattributes` (see this repo's) so checkouts do
-not change the hashed bytes.
+ids must start with it.
 
 ## How Bob was used
 
