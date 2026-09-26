@@ -138,8 +138,7 @@ def _generate_rules_md(entries: list[dict], source_hash: str) -> str:
 
     parts: list[str] = [
         "# Countersign - Bob Rules",
-        "> Derived from `countersign.yaml`."
-        " Regenerate with: `python scripts/generate_bob_rules.py`",
+        "> Derived from `countersign.yaml`. Regenerate with: `python scripts/generate_bob_rules.py`",
         f"> Source hash (countersign.yaml, SHA-256): {source_hash}",
         "",
         _ACCESS_TABLE,
@@ -187,8 +186,7 @@ def _bobignore_block(entries: list[dict]) -> str:
     ]
     for e in none_entries:
         lines.append(f"# {e['id']}: {e['requirement']}")
-        for p in e.get("paths", []):
-            lines.append(p)
+        lines.extend(e.get("paths", []))
         lines.append("")
 
     return "\n".join(lines)

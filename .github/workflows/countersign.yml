@@ -16,12 +16,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
@@ -29,23 +29,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Verify Bob rules are in sync
-        id: rules_sync
         run: python scripts/generate_bob_rules.py --check
-        continue-on-error: true
-
-      - name: Rules out of sync (failure details)
-        if: steps.rules_sync.outcome == 'failure'
-        run: |
-          echo "::error::Bob rules are out of sync. Run: python scripts/generate_bob_rules.py"
-          exit 1
 
       - name: Run Countersign check
-        id: countersign_check
         run: python countersign.py check
-        continue-on-error: true
 
-      - name: Countersign check failed (failure details)
-        if: steps.countersign_check.outcome == 'failure'
+      - name: Gate summary on failure
+        if: failure()
         run: |
-          echo "::error::Countersign gate failed. CI ran the same checks as the local pre-commit hook. Reproduce locally with: python countersign.py check"
-          exit 1
+          echo "Countersign gate failed. CI ran the same checks as the local pre-commit hook. Reproduce locally with: python countersign.py check"

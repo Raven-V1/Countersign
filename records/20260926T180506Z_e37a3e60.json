@@ -1,0 +1,69 @@
+{
+  "timestamp": "20260926T180506Z",
+  "git_hash": "aa7666ff97d842bced358f5805b5bd8a80bd4587",
+  "prev_record_fingerprint": "b2493f914b217267067f6b87d96072b3af421d81546727aef3d81cc37cc0e3e7",
+  "outcome": "PASS",
+  "z_status": "not_implemented",
+  "z_job_id": null,
+  "z_rc": null,
+  "wx_model_id": "ibm/granite-4-h-small",
+  "wx_error": "",
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "PASS",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 30 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": "........................................                                 [100%]\n40 passed in 3.82s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "FAIL",
+      "check": "python -m ruff check .",
+      "output": "ISC004 Unparenthesized implicit string concatenation in collection\n   --> scripts\\generate_bob_rules.py:141:9\n    |\n139 |       parts: list[str] = [\n140 |           \"# Countersign - Bob Rules\",\n141 | /         \"> Derived from `countersign.yaml`.\"\n142 | |         \" Regenerate with: `python scripts/generate_bob_rules.py`\",\n    | |__________________________________________________________________^\n143 |           f\"> Source hash (countersign.yaml, SHA-256): {source_hash}\",\n144 |           \"\",\n    |\nhelp: Did you forget a comma?\nhelp: Wrap implicitly concatenated strings in parentheses\n\nPERF402 Use `list` or `list.copy` to create a copy of a list\n   --> scripts\\generate_bob_rules.py:191:13\n    |\n189 |         lines.append(f\"# {e['id']}: {e['requirement']}\")\n190 |         for p in e.get(\"paths\", []):\n191 |             lines.append(p)\n    |             ^^^^^^^^^^^^^^^\n192 |         lines.append(\"\")\n    |\n\nFound 2 errors.\nNo fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).",
+      "plain_english": "The ruff style check failed due to unparenthesized implicit string concatenation and missing list copy. Fix the string concatenation by wrapping it in parentheses and use list.copy() to create a copy of the list."
+    }
+  ]
+}
