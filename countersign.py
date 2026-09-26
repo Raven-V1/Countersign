@@ -201,6 +201,7 @@ def run_checks(
     staged_files: list[str],
     scannable_files: list[str] | None = None,
     sec002_empty_msg: str = "0 files staged — skipped.",
+    sec002_empty_status: str = "UNVERIFIED",
 ) -> list[dict]:
     results = []
     for rule in rules:
@@ -221,7 +222,7 @@ def run_checks(
 
         # SEC-002: append only ACM-filtered staged files so detect-secrets
         # never receives paths that no longer exist on disk.
-        # Zero scannable files → nothing to scan; record as UNVERIFIED.
+        # Zero scannable files → nothing to scan; status controlled by caller.
         extra: list[str] | None = None
         if rid == "SEC-002":
             files_to_scan = scannable_files if scannable_files is not None else []
@@ -229,7 +230,7 @@ def run_checks(
                 results.append(
                     {
                         "id": rid,
-                        "status": "UNVERIFIED",
+                        "status": sec002_empty_status,
                         "check": check_cmd,
                         "output": sec002_empty_msg,
                         "plain_english": "",
@@ -632,6 +633,71 @@ def cmd_check() -> int:
     return 0
 
 
+def cmd_ci(changed_files: list[str] | None = None) -> int:
+    """CI mode: same gate as run — no records, no Z, no watsonx, no .env.
+
+    File list for SEC-002:
+      1. --changed-files args (if provided via CLI)
+      2. CS_CHANGED_FILES env var (newline-separated; empty string = 0 files)
+      3. Neither set → scan all tracked files (e.g. new branch or first push)
+
+    Zero changed files → SEC-002 PASS with a note (not UNVERIFIED).
+    """
+    rules = load_rules()
+
+    # Resolve the file list for SEC-002.
+    if changed_files is not None:
+        # CLI args take precedence.
+        ci_files: list[str] | None = [f for f in changed_files if Path(f).is_file()]
+    elif "CS_CHANGED_FILES" in os.environ:
+        raw = os.environ["CS_CHANGED_FILES"].strip()
+        ci_files = [f for f in raw.splitlines() if f and Path(f).is_file()]
+    else:
+        # Not set at all → scan all tracked files (handles new branch / zeros base).
+        ci_files = None
+
+    if ci_files is None:
+        scannable = get_all_scannable_files()
+        sec002_msg = "No base SHA — scanning all tracked files."
+        sec002_status = "UNVERIFIED"  # can't happen (scannable will be non-empty if files exist)
+    elif not ci_files:
+        scannable = []
+        sec002_msg = "0 changed files — SEC-002 skipped (PASS)."
+        sec002_status = "PASS"
+    else:
+        scannable = ci_files
+        sec002_msg = "0 changed files — SEC-002 skipped (PASS)."
+        sec002_status = "PASS"
+
+    print("Running Countersign CI checks…")
+
+    results = run_checks(
+        rules,
+        staged_files=[],
+        scannable_files=scannable,
+        sec002_empty_msg=sec002_msg,
+        sec002_empty_status=sec002_status,
+    )
+    blocking = collect_blocking(rules, results)
+
+    print_summary(rules, results, record_path=None)
+
+    if blocking:
+        print(f"  ✗ CI gate FAILED — {len(blocking)} blocking failure(s):\n")
+        for b in blocking:
+            rule = next(r for r in rules if r["id"] == b["id"])
+            print(f"    [{b['id']}] {rule['requirement']}")
+            if b["output"]:
+                for line in b["output"].splitlines()[:5]:
+                    print(f"        {line}")
+            print()
+        return 1
+
+    print("  ✓ All checks passed — CI gate green.\n")
+    print("  Note: IBM Z approval runs locally only (Zowe not available in CI).")
+    return 0
+
+
 def cmd_approve_rules() -> int:
     """Write SHA-256 of countersign.yaml to .countersign/approved_rules.sha256.
     Human-only — AI agents must never call this subcommand."""
@@ -1019,6 +1085,14 @@ def main() -> None:
     )
 
     sub.add_parser("check", help="Run checks read-only: print results, no record, no Z, no watsonx.")
+
+    ci_p = sub.add_parser("ci", help="CI mode: same gate as run — no records, no Z, no watsonx.")
+    ci_p.add_argument(
+        "--changed-files",
+        nargs="*",
+        metavar="FILE",
+        help="Files changed in this push/PR (for SEC-002). Defaults to CS_CHANGED_FILES env var.",
+    )
     sub.add_parser("approve-rules", help="Approve current countersign.yaml (human only).")
     sub.add_parser("verify-rules", help="Verify countersign.yaml matches approved hash.")
     sub.add_parser("verify-chain", help="Verify evidence record chain integrity.")
@@ -1033,6 +1107,8 @@ def main() -> None:
         sys.exit(cmd_run(skip_z=args.skip_z))
     elif args.command == "check":
         sys.exit(cmd_check())
+    elif args.command == "ci":
+        sys.exit(cmd_ci(changed_files=args.changed_files))
     elif args.command == "approve-rules":
         sys.exit(cmd_approve_rules())
     elif args.command == "verify-rules":

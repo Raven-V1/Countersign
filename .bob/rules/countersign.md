@@ -1,6 +1,6 @@
 # Countersign - Bob Rules
 > Derived from `countersign.yaml`. Regenerate with: `python scripts/generate_bob_rules.py`
-> Source hash (countersign.yaml, SHA-256): c2474cca0f0483dd1c72bf2a99818bce90463632eeeda896db897af16d0a4d70
+> Source hash (countersign.yaml, SHA-256): 0fa9f9e90287c2c623aac75a6950b47e275765f590dd888adfd562bf9225920a
 
 ## Access Level Reference
 
@@ -58,6 +58,11 @@
 - Your access: **edit**
 
 ### Quality (quality FAIL is a warning only - commit is not blocked)
+
+**BOB-001 - Bob rules file is in sync with countersign.yaml**
+- Check: `python scripts/generate_bob_rules.py --check`
+- Watches: `countersign.yaml`, `.bob/rules/countersign.md`, `.bobignore`
+- Your access: **read only**
 
 **QUAL-001 - Python source files pass ruff style checks**
 - Check: `python -m ruff check .`

@@ -78,6 +78,16 @@
     - "demo_app/app.py"
   ai_access: edit
 
+- id: BOB-001
+  requirement: Bob rules file is in sync with countersign.yaml
+  priority: quality
+  check: "python scripts/generate_bob_rules.py --check"
+  paths:
+    - "countersign.yaml"
+    - ".bob/rules/countersign.md"
+    - ".bobignore"
+  ai_access: read
+
 - id: QUAL-001
   requirement: Python source files pass ruff style checks
   priority: quality
