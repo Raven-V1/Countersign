@@ -1,0 +1,69 @@
+{
+  "timestamp": "20260926T184203Z",
+  "git_hash": "e6f797e2660ace1ffd5766bc81899847263e9d70",
+  "prev_record_fingerprint": "e1574d50a7ed2ef6ea0cb95c7d3e1609d91fe7720fe2f21f94345454c187d640",
+  "outcome": "BLOCKED",
+  "z_status": "unavailable",
+  "z_job_id": null,
+  "z_rc": null,
+  "wx_model_id": "ibm/granite-4-h-small",
+  "wx_error": "",
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "UNVERIFIED",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign",
+      "output": "0 files staged \u2014 skipped.",
+      "plain_english": "The check was UNVERIFIED because no staged files were found to analyze for secrets. Ensure files are staged before running the secret detection command."
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 32 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": "...........................................                              [100%]\n43 passed in 4.73s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "FAIL",
+      "check": "python -m ruff check .",
+      "output": "UP037 [*] Remove quotes from type annotation\n   --> countersign.py:335:15\n    |\n333 |     path: Path,\n334 |     z_status: str,\n335 |     z_job_id: \"str | None\",\n    |               ^^^^^^^^^^^^\n336 |     z_rc: \"int | None\",\n337 | ) -> None:\n    |\nhelp: Remove quotes\n    |\n334 |     z_status: str,\n    -     z_job_id: \"str | None\",\n335 +     z_job_id: str | None,\n336 |     z_rc: \"int | None\",\n    |\n\nUP037 [*] Remove quotes from type annotation\n   --> countersign.py:336:11\n    |\n334 |     z_status: str,\n335 |     z_job_id: \"str | None\",\n336 |     z_rc: \"int | None\",\n    |           ^^^^^^^^^^^^\n337 | ) -> None:\n338 |     \"\"\"Rewrite z_status, z_job_id, z_rc fields in an existing record file.\"\"\"\n    |\nhelp: Remove quotes\n    |\n335 |     z_job_id: \"str | None\",\n    -     z_rc: \"int | None\",\n336 +     z_rc: int | None,\n337 | ) -> None:\n    |\n\nUP037 [*] Remove quotes from type annotation\n   --> countersign.py:346:45\n    |\n346 | def _zowe(args: list, timeout: int = 30) -> \"tuple[int, str]\":\n    |                                             ^^^^^^^^^^^^^^^^^\n347 |     \"\"\"Run the Zowe CLI with the given argument list.\n    |\nhelp: Remove quotes\n    |\n345 |\n    - def _zowe(args: list, timeout: int = 30) -> \"tuple[int, str]\":\n346 + def _zowe(args: list, timeout: int = 30) -> tuple[int, str]:\n347 |     \"\"\"Run the Zowe CLI with the given argument list.\n    |\n\nUP037 [*] Remove quotes from type annotation\n   --> countersign.py:376:43\n    |\n376 | def _run_z_approval(record_path: Path) -> \"tuple[str, str | None, int | None]\":\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n377 |     \"\"\"Upload record + verifier to USS, submit VERIFY.jcl, return (z_status, z_job_id, z_rc).\n    |\nhelp: Remove quotes\n    |\n375 |\n    - def _run_z_approval(record_path: Path) -> \"tuple[str, str | None, int | None]\":\n376 + def _run_z_approval(record_path: Path) -> tuple[str, str | None, int | None]:\n377 |     \"\"\"Upload record + verifier to USS, submit VERIFY.jcl, return (z_status, z_job_id, z_rc).\n    |\n\nUP037 [*] Remove quotes from type annotation\n   --> countersign.py:445:15\n    |\n444 |     # Parse Zowe --rfj JSON response\n445 |     z_job_id: \"str | None\" = None\n    |               ^^^^^^^^^^^^\n446 |     z_rc_val: \"int | None\" = None\n447 |     try:\n    |\nhelp: Remove quotes\n    |\n444 |     # Parse Zowe --rfj JSON response\n    -     z_job_id: \"str | None\" = None\n445 +     z_job_id: str | None = None\n446 |     z_rc_val: \"int | None\" = None\n    |\n\nUP037 [*] Remove quotes from type annotation\n   --> countersign.py:446:15\n    |\n444 |     # Parse Zowe --rfj JSON response\n445 |     z_job_id: \"str | None\" = None\n446 |     z_rc_val: \"int | None\" = None\n    |               ^^^^^^^^^^^^\n447 |     try:\n448 |         payload = json.loads(out)\n    |\nhelp: Remove quotes\n    |\n445 |     z_job_id: \"str | None\" = None\n    -     z_rc_val: \"int | None\" = None\n446 +     z_rc_val: int | None = None\n447 |     try:\n    |\n\nPLW1510 `subprocess.run` without explicit `check` argument\n  --> demo_app\\test_z_verify.py:41:14\n   |\n40 | def _run_vr(path: Path) -> tuple[int, str]:\n41 |     result = subprocess.run(\n   |              ^^^^^^^^^^^^^^\n42 |         [sys.executable, str(_VR_SCRIPT), str(path)],\n43 |         capture_output=True,\n   |\nhelp: Add explicit `check=False`\n\nS112 `try`-`except`-`continue` detected, consider logging the exception\n  --> demo_app\\test_z_verify.py:59:9\n   |\n57 |           try:\n58 |               data = json.loads(f.read_bytes().decode(\"utf-8\"))\n59 | /         except Exception:\n60 | |             continue\n   | |____________________^\n61 |           if data.get(\"outcome\") == \"PASS\":\n62 |               return f\n   |\n\nBLE001 Do not catch blind exception: `Exception`\n  --> demo_app\\test_z_verify.py:59:16\n   |\n57 |         try:\n58 |             data = json.loads(f.read_bytes().decode(\"utf-8\"))\n59 |         except Exception:\n   |                ^^^^^^^^^\n60 |             continue\n61 |         if data.get(\"outcome\") == \"PASS\":\n   |\n\nFound 9 erro\n... [truncated, 42 chars omitted]",
+      "plain_english": "The style check failed due to unnecessary quotes around type annotations in countersign.py. Remove the quotes from the type annotations to comply with the style guide."
+    }
+  ]
+}

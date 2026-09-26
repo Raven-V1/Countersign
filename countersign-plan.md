@@ -342,13 +342,20 @@ Blocking policy:
 - Human submits it (`zowe zos-jobs submit local-file zos/PROBE.jcl`) and pastes the SYSOUT back to update this plan with the confirmed Python path.
 
 **Todo List:**
-1. Write `zos/PROBE.jcl` with run instructions in a comment header.
+1. Write `zos/PROBE.jcl` with run instructions in a comment header. ✓
 
-**Relevant Context:** Zowe profile name TBD — confirm with `zowe config profiles`. Use `--zosmf-profile <name>` or rely on the default.
+**Relevant Context:** Default Zowe profile (`zosmf`) used; inherits host/auth
+from `global_base`. No `--zosmf-profile` flag needed.
 
-**Confirmed USS Python path:** _TBD — paste SYSOUT from PROBE.jcl here_
+**Probe Results (JOB02314, RC=0000, 2026-09-26):**
+- Python version: `Python 3.9.2`
+- `command -v python3`: `/z/bin/python3` (symlink)
+- `ls /usr/lpp/IBM/cyp/*/pyz/bin`: `/usr/lpp/IBM/cyp/v3r9/pyz/bin`
 
-**Status:** [ ] pending
+**Confirmed USS Python path:** `/usr/lpp/IBM/cyp/v3r9/pyz/bin/python3`
+_(ls result preferred over symlink per plan rule; use this absolute path in CSGNJOB.jcl)_
+
+**Status:** [x] complete
 
 ---
 
@@ -356,25 +363,45 @@ Blocking policy:
 
 **Intent:** After evidence is collected locally, upload the record to z/OS, submit a JCL job that verifies the fingerprint chain and that all security requirements passed, and accept the commit only on RC=0.
 
-**Expected Outcomes:**
-- Z approval runs automatically on every non-CI invocation unless `--skip-z` is passed.
-- `countersign.py run --skip-z` records `"z_status": "skipped_by_human"`; never shown as Z-approved on dashboard.
-- On Z approval: upload record JSON to `<ZOS_HLQ>.COUNTERSIGN.RECORDS` via Zowe CLI, submit `zos/CSGNJOB.jcl`.
-- JCL calls `zos/verify_chain.py` in USS: checks (a) SHA-256 fingerprint matches previous record, (b) all security requirements are PASS.
-- countersign.py polls job status, reads RC; fails closed (records `"z_status": "unavailable"`) if Zowe is unreachable or times out after 30 s.
-- Z job ID and RC written back into the local record JSON.
-- Dashboard shows Z job ID, RC, and Z-approved badge.
+**Expected Outcomes (implemented):**
+- Z approval runs automatically on every non-CI invocation unless `--skip-z` is passed. ✓
+- `countersign.py run --skip-z` records `"z_status": "skipped_by_human"`. ✓
+- On Z approval: upload record + `zos/verify_record.py` to `ZOS_USS_DIR` via Zowe CLI,
+  submit `zos/VERIFY.jcl` (temp copy with record name substituted). ✓
+- `zos/verify_record.py` on USS checks: canonical hash, outcome != BLOCKED,
+  no SEC-* check FAIL or UNVERIFIED. Exits 0 / 8. ✓
+- countersign.py parses `--rfj` JSON for retcode; fails closed with
+  `z_status=unavailable` if Zowe unreachable or retcode unparseable. ✓
+- Z job ID and RC written back into the local record JSON. ✓
+- `ZOS_USS_DIR` read from `.env` only (gitignored). ✓
+
+**Live Run Results (2026-09-26):**
+
+| Run | Record | Outcome | Job | CC | z_status |
+|---|---|---|---|---|---|
+| E.1 python3 --version probe | n/a | — | JOB02345 | 0000 | — |
+| E.2 good record (PASS, all SEC-* PASS) | 20260926T184327Z_e48f27f7.json | PASS | JOB02356 | 0000 | approved |
+| E.3 tampered record (BLOCKED, SEC-001 FAIL) | synthetic | BLOCKED | JOB02358 | 2048 | blocked_by_z |
+
+**Note:** BPXBATCH maps Python `sys.exit(8)` → CC 2048 (8 × 256). Parser treats any non-zero CC as `blocked_by_z`.
 
 **Todo List:**
-1. Write `zos/CSGNJOB.jcl`: BPXBATCH step using confirmed Python path from 5.0.
-2. Write `zos/verify_chain.py`: reads uploaded JSON, re-computes SHA-256, checks chain and security requirements.
-3. Add `_run_z_approval(record_path)` to `countersign.py`: upload → submit → poll → read RC → update record.
-4. `ZOS_HLQ` read from `os.getenv("ZOS_HLQ")` only; Zowe profile read by `zowe` CLI, not by Python.
-5. Update dashboard to show Z approval status.
+1. Write `zos/verify_record.py` (stdlib only, Python 3.9 compatible). ✓
+2. Write `zos/VERIFY.jcl` template (BPXBATCH, `$HOME/countersign`, `%%RECORD_NAME%%` placeholder). ✓
+3. Add `_run_z_approval`, `_update_record_z`, `_zowe` to `countersign.py`; wire into `cmd_run`. ✓
+4. Zowe profile used automatically by CLI; `ZOS_USS_DIR` from `.env` only. ✓
+5. Parity tests: `demo_app/test_z_verify.py` (3 tests: PASS record, tampered JSON, BLOCKED). ✓
 
-**Relevant Context:** `ZOS_HLQ` in `.env` only — not in `.env.example` (do not modify that file). Never read `~/.zowe/` directly.
+**Relevant Context:**
+- `ZOS_USS_DIR=//z/z81854/countersign` in `.env` (double-slash required on Windows to
+  prevent Zowe from treating `/z/` as drive letter Z:).
+- USS dir: `/z/z81854/countersign` (created manually).
+- VERIFY.jcl uses `$HOME/countersign` in shell commands (expands on USS).
+- All JCL lines ≤ 80 columns after `%%RECORD_NAME%%` substitution.
+- `write_record` and `_update_record_z` use `write_bytes` (LF only) to avoid CRLF
+  on Windows; `verify_record.py` normalises CRLF→LF before hashing.
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ---
 

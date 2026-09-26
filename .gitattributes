@@ -10,7 +10,11 @@ countersign.yaml           text eol=lf
 .bobignore                 text eol=lf
 
 # Files whose SHA-256 is checked or chained must never have line endings
-# rewritten by Git -- binary mode (-text) preserves bytes exactly.
-records/*.json             -text
-.countersign/*             -text
-.leak-baseline.json        -text
+# rewritten by Git -- binary mode preserves bytes exactly.
+records/*.json             binary
+.countersign/*             binary
+.leak-baseline.json        binary
+
+# z/OS artefacts -- keep LF so USS Python and BPXBATCH see consistent bytes.
+zos/*.jcl                  text eol=lf
+zos/*.py                   text eol=lf

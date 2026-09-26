@@ -1,0 +1,69 @@
+{
+  "timestamp": "20260926T181047Z",
+  "git_hash": "e27fa79358390c6a3ba508515b81d02b028fcd80",
+  "prev_record_fingerprint": "078889bad842b0f6c7f69757bc5f45f6dd53cfb7b29650873c2637119db50d8b",
+  "outcome": "PASS",
+  "z_status": "not_implemented",
+  "z_job_id": null,
+  "z_rc": null,
+  "wx_model_id": "",
+  "wx_error": "",
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "PASS",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 31 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "PASS",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": "........................................                                 [100%]\n40 passed in 3.85s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "PASS",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "PASS",
+      "check": "python -m ruff check .",
+      "output": "All checks passed!",
+      "plain_english": ""
+    }
+  ]
+}

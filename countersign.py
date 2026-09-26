@@ -26,6 +26,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -293,6 +294,7 @@ def write_record(
     z_status: str | None,
     z_job_id: str | None,
     z_rc: int | None,
+    z_verified_hash: str | None = None,
     wx_model_id: str = "",
     wx_error: str = "",
 ) -> Path:
@@ -310,12 +312,176 @@ def write_record(
         "z_status": z_status,
         "z_job_id": z_job_id,
         "z_rc": z_rc,
+        "z_verified_hash": z_verified_hash,
         "wx_model_id": wx_model_id,
         "wx_error": wx_error,
         "results": results,
     }
-    filename.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    # write_bytes avoids CRLF translation on Windows; records are always LF.
+    filename.write_bytes(json.dumps(record, indent=2).encode("utf-8"))
     return filename
+
+
+# ---------------------------------------------------------------------------
+# Z approval helpers
+# ---------------------------------------------------------------------------
+
+_ZOS_VERIFY_JCL = Path("zos") / "VERIFY.jcl"
+_ZOS_VERIFY_PY = Path("zos") / "verify_record.py"
+
+
+def _update_record_z(
+    path: Path,
+    z_status: str,
+    z_job_id: str | None,
+    z_rc: int | None,
+    z_verified_hash: str | None,
+) -> None:
+    """Rewrite z_status, z_job_id, z_rc, z_verified_hash in an existing record file."""
+    data = json.loads(path.read_bytes().decode("utf-8"))
+    data["z_status"] = z_status
+    data["z_job_id"] = z_job_id
+    data["z_rc"] = z_rc
+    data["z_verified_hash"] = z_verified_hash
+    path.write_bytes(json.dumps(data, indent=2).encode("utf-8"))
+
+
+def _zowe(args: list, timeout: int = 30) -> tuple[int, str]:
+    """Run the Zowe CLI with the given argument list.
+
+    Returns (returncode, combined stdout+stderr).
+    rc == -1: zowe not found.  rc == -2: timed out.
+
+    On Windows, zowe is a .cmd file so we go through cmd /c.
+    """
+    if sys.platform == "win32":
+        cmd = ["cmd", "/c", "zowe"] + args
+    else:
+        cmd = ["zowe"] + args
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        out = ((result.stdout or "") + (result.stderr or "")).strip()
+        return result.returncode, out
+    except subprocess.TimeoutExpired:
+        return -2, f"timed out after {timeout}s"
+    except FileNotFoundError:
+        return -1, "zowe CLI not found"
+
+
+def _run_z_approval(
+    record_path: Path,
+) -> tuple[str, str | None, int | None, str | None]:
+    """Upload record + verifier to USS, submit VERIFY.jcl.
+
+    Returns (z_status, z_job_id, z_rc, z_verified_hash).
+
+    z_status values:
+      approved        -- Z job CC 0000
+      blocked_by_z    -- Z job CC != 0000
+      unavailable     -- Zowe unreachable, timeout, or parse failure
+    z_verified_hash is the sha256 of the uploaded record bytes (pre-Z fields),
+    or None when z_status != "approved".
+    """
+    uss_dir = os.getenv("ZOS_USS_DIR", "").strip()
+    if not uss_dir:
+        print("  Z approval: ZOS_USS_DIR not set in .env — commit blocked.")
+        return "unavailable", None, None, None
+
+    # Capture the record hash before any Z fields are written back.
+    expected_hash = sha256_file(record_path)
+
+    print(f"  Z approval: uploading to {uss_dir} …")
+
+    # Upload verify_record.py
+    rc, out = _zowe([
+        "zos-files", "upload", "file-to-uss",
+        str(_ZOS_VERIFY_PY), f"{uss_dir}/verify_record.py",
+        "--binary",
+    ])
+    if rc != 0:
+        print(f"  Z upload failed (verify_record.py): {out[:200]}")
+        return "unavailable", None, None, None
+
+    # Upload the evidence record
+    record_name = record_path.name
+    rc, out = _zowe([
+        "zos-files", "upload", "file-to-uss",
+        str(record_path), f"{uss_dir}/{record_name}",
+        "--binary",
+    ])
+    if rc != 0:
+        print(f"  Z upload failed ({record_name}): {out[:200]}")
+        return "unavailable", None, None, None
+
+    # Generate temp JCL from template; substitute both name and hash placeholders.
+    if not _ZOS_VERIFY_JCL.exists():
+        print(f"  Z approval: {_ZOS_VERIFY_JCL} not found.")
+        return "unavailable", None, None, None
+
+    jcl_text = (
+        _ZOS_VERIFY_JCL.read_text(encoding="utf-8")
+        .replace("%%RECORD_NAME%%", record_name)
+        .replace("%%EXPECTED_HASH%%", expected_hash)
+    )
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jcl", prefix="countersign_verify_")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            fh.write(jcl_text)
+
+        print("  Z approval: submitting VERIFY job …")
+        rc, out = _zowe([
+            "zos-jobs", "submit", "local-file", tmp_path,
+            "--wait-for-output", "--rfj",
+        ])
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    if rc == -1:
+        print("  Z approval: zowe CLI not found.")
+        return "unavailable", None, None, None
+    if rc == -2:
+        print("  Z approval: timed out waiting for job.")
+        return "unavailable", None, None, None
+
+    # Parse Zowe --rfj JSON response
+    z_job_id: str | None = None
+    z_rc_val: int | None = None
+    try:
+        payload = json.loads(out)
+        job_data = payload.get("data") or {}
+        z_job_id = job_data.get("jobid")
+        retcode_str = str(job_data.get("retcode") or "")
+        if retcode_str.startswith("CC "):
+            z_rc_val = int(retcode_str[3:].strip())
+        else:
+            z_rc_val = None
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        print(f"  Z approval: could not parse Zowe response ({exc}); raw: {out[:300]}")
+        return "unavailable", z_job_id, None, None
+
+    if z_rc_val is None:
+        print(f"  Z approval: unexpected retcode in response: {out[:200]}")
+        return "unavailable", z_job_id, None, None
+
+    if z_rc_val == 0:
+        print(f"  Z approval: approved (job {z_job_id} CC 0000).")
+        return "approved", z_job_id, z_rc_val, expected_hash
+
+    # BPXBATCH propagates Python sys.exit(N) as CC N*256 (e.g. exit 8 -> CC 2048).
+    print(f"  Z approval: blocked (job {z_job_id} CC {z_rc_val:04d}).")
+    return "blocked_by_z", z_job_id, z_rc_val, None
 
 
 # ---------------------------------------------------------------------------
@@ -375,17 +541,16 @@ def cmd_run(skip_z: bool) -> int:
         if expl:
             res["plain_english"] = expl
 
-    # Z approval (Phase 5 — stub)
+    # 5. Determine initial Z status; write record with it.
     ci_mode = os.getenv("CI", "").lower() in ("true", "1", "yes")
     if ci_mode:
-        z_status: str | None = "skipped_ci"
+        initial_z_status: str = "skipped_ci"
     elif skip_z:
-        z_status = "skipped_by_human"
+        initial_z_status = "skipped_by_human"
     else:
-        z_status = "not_implemented"  # Phase 5 will wire real Z approval
+        initial_z_status = None
 
-    # 5. Write record (chain hash is prev_fingerprint() inside write_record)
-    record_path = write_record(results, outcome, z_status, None, None, wx_model_id, wx_error)
+    record_path = write_record(results, outcome, initial_z_status, None, None, None, wx_model_id, wx_error)
     print_summary(rules, results, record_path)
 
     if blocking:
@@ -400,6 +565,22 @@ def cmd_run(skip_z: bool) -> int:
             if plain:
                 print(f"        → {plain}")
             print()
+        if not ci_mode and not skip_z:
+            # Still run Z so BLOCKED records are audited; Z will also reject them.
+            z_status_final, z_job_id, z_rc, z_verified_hash = _run_z_approval(record_path)
+            _update_record_z(record_path, z_status_final, z_job_id, z_rc, z_verified_hash)
+        return 1
+
+    # 6. Z approval (non-CI, non-skipped only)
+    z_blocked = False
+    if not ci_mode and not skip_z:
+        z_status_final, z_job_id, z_rc, z_verified_hash = _run_z_approval(record_path)
+        _update_record_z(record_path, z_status_final, z_job_id, z_rc, z_verified_hash)
+        if z_status_final in ("blocked_by_z", "unavailable"):
+            print(f"  ✗ Z approval failed (z_status={z_status_final}) — commit blocked.\n")
+            z_blocked = True
+
+    if z_blocked:
         return 1
 
     print("  ✓ All checks passed — commit approved.\n")
@@ -492,8 +673,9 @@ def cmd_verify_chain() -> int:
         return 0
 
     prev_fp = "genesis"
-    for i, f in enumerate(files):
-        record = json.loads(f.read_text(encoding="utf-8"))
+    for f in files:
+        raw_bytes = f.read_bytes()
+        record = json.loads(raw_bytes.decode("utf-8"))
         stored_prev = record.get("prev_record_fingerprint", "")
         if stored_prev != prev_fp:
             print(
@@ -502,7 +684,26 @@ def cmd_verify_chain() -> int:
                 f"  Stored  prev_fingerprint:  {stored_prev}"
             )
             return 1
-        prev_fp = sha256_file(f)
+
+        # For Z-approved records, verify the pre-Z hash hasn't been tampered.
+        # Reconstruct the record as it was before _update_record_z wrote it back.
+        zvh = record.get("z_verified_hash")
+        if zvh is not None:
+            pre_z = dict(record)
+            pre_z["z_status"] = None
+            pre_z["z_job_id"] = None
+            pre_z["z_rc"] = None
+            pre_z["z_verified_hash"] = None
+            recon_hash = sha256_bytes(json.dumps(pre_z, indent=2).encode("utf-8"))
+            if recon_hash != zvh:
+                print(
+                    f"FAIL: z_verified_hash mismatch at {f.name}\n"
+                    f"  Stored z_verified_hash: {zvh}\n"
+                    f"  Reconstructed hash:     {recon_hash}"
+                )
+                return 1
+
+        prev_fp = sha256_bytes(raw_bytes)
 
     print(f"PASS: Chain intact across {len(files)} record(s).")
     return 0
@@ -678,6 +879,123 @@ def cmd_draft_rules(from_file: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Z audit
+# ---------------------------------------------------------------------------
+
+
+def _parse_ledger(text: str) -> dict[str, set[str]]:
+    """Parse approved.log text into {hash: {record_name, ...}}."""
+    ledger: dict[str, set[str]] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            h, rname = parts[0], parts[1]
+            ledger.setdefault(h, set()).add(rname)
+    return ledger
+
+
+def _audit_records(
+    ledger: dict[str, set[str]],
+    records_dir: Path = RECORDS_DIR,
+) -> int:
+    """Audit all approved records against the ledger.
+
+    For each record with z_status=="approved":
+      - z_verified_hash must appear in the ledger with the same record name.
+      - Reconstruct pre-Z bytes (null all four Z fields) and verify hash matches.
+
+    Returns 0 if all pass, 1 on any failure.
+    """
+    approved = sorted(f for f in records_dir.glob("*.json") if f.is_file())
+    approved = [
+        f for f in approved
+        if json.loads(f.read_bytes().decode("utf-8")).get("z_status") == "approved"
+    ]
+
+    if not approved:
+        print("z-audit: no approved records found.")
+        return 0
+
+    failures = 0
+    for f in approved:
+        data = json.loads(f.read_bytes().decode("utf-8"))
+        zvh = data.get("z_verified_hash")
+        rname = f.name
+
+        if zvh is None:
+            # Pre-ledger record: approved before the expected-hash / log feature existed.
+            print(f"  SKIP (pre-ledger) {rname}")
+            continue
+
+        if zvh not in ledger or rname not in ledger[zvh]:
+            print(f"  MISSING-FROM-LEDGER  {rname}")
+            failures += 1
+            continue
+
+        pre_z = dict(data)
+        pre_z["z_status"] = None
+        pre_z["z_job_id"] = None
+        pre_z["z_rc"] = None
+        pre_z["z_verified_hash"] = None
+        recon_hash = sha256_bytes(json.dumps(pre_z, indent=2).encode("utf-8"))
+        if recon_hash != zvh:
+            print(f"  RECONSTRUCT-MISMATCH {rname}  (stored={zvh[:16]}… recon={recon_hash[:16]}…)")
+            failures += 1
+            continue
+
+        print(f"  OK  {rname}")
+
+    if failures:
+        print(f"\nz-audit: {failures} failure(s).")
+        return 1
+
+    print(f"\nz-audit: all {len(approved)} approved record(s) OK.")
+    return 0
+
+
+def cmd_z_audit() -> int:
+    """Download approved.log from USS and audit all approved records."""
+    uss_dir = os.getenv("ZOS_USS_DIR", "").strip()
+    if not uss_dir:
+        print("z-audit: ZOS_USS_DIR not set — cannot continue.")
+        return 1
+
+    log_remote = f"{uss_dir}/approved.log"
+    print(f"z-audit: downloading {log_remote} …")
+
+    # mkstemp creates the file; Zowe skips downloads when the target already
+    # exists.  Remove it immediately so Zowe can write it.
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".log", prefix="cs_audit_")
+    os.close(tmp_fd)
+    os.unlink(tmp_path)
+    try:
+        rc, out = _zowe([
+            "zos-files", "download", "uss-file", log_remote,
+            "--file", tmp_path, "--binary",
+        ])
+        if rc != 0:
+            print(f"z-audit: could not download approved.log ({out[:200]})")
+            return 1
+
+        try:
+            log_text = Path(tmp_path).read_bytes().decode("utf-8", errors="replace")
+        except OSError as exc:
+            print(f"z-audit: could not read downloaded log: {exc}")
+            return 1
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    ledger = _parse_ledger(log_text)
+    return _audit_records(ledger)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -704,6 +1022,7 @@ def main() -> None:
     sub.add_parser("approve-rules", help="Approve current countersign.yaml (human only).")
     sub.add_parser("verify-rules", help="Verify countersign.yaml matches approved hash.")
     sub.add_parser("verify-chain", help="Verify evidence record chain integrity.")
+    sub.add_parser("z-audit", help="Audit approved records against the Z ledger.")
 
     draft_p = sub.add_parser("draft-rules", help="Ask watsonx to draft rules from a spec file.")
     draft_p.add_argument("--from", dest="from_file", required=True, help="Source spec file.")
@@ -720,6 +1039,8 @@ def main() -> None:
         sys.exit(cmd_verify_rules())
     elif args.command == "verify-chain":
         sys.exit(cmd_verify_chain())
+    elif args.command == "z-audit":
+        sys.exit(cmd_z_audit())
     elif args.command == "draft-rules":
         sys.exit(cmd_draft_rules(args.from_file))
     else:
