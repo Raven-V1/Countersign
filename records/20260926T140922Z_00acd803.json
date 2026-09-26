@@ -1,0 +1,67 @@
+{
+  "timestamp": "20260926T140922Z",
+  "git_hash": "a10cba75b7d75fca76119a225244e6a50480d2b7",
+  "prev_record_fingerprint": "f1740476f495f057d8808aad5a626409f235259c208f0dd1f68a4455b3981728",
+  "outcome": "BLOCKED",
+  "z_status": "not_implemented",
+  "z_job_id": null,
+  "z_rc": null,
+  "results": [
+    {
+      "id": "SEC-001",
+      "status": "PASS",
+      "check": "python -m bandit -r . --exclude .venv,venv,env,demo_app/scenarios -ll -q",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-002",
+      "status": "PASS",
+      "check": "python -m detect_secrets.pre_commit_hook --baseline .leak-baseline.json --exclude-files ^records --exclude-files ^.countersign",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-003",
+      "status": "PASS",
+      "check": "python countersign.py verify-rules",
+      "output": "PASS: countersign.yaml matches approved baseline.",
+      "plain_english": ""
+    },
+    {
+      "id": "SEC-004",
+      "status": "PASS",
+      "check": "python countersign.py verify-chain",
+      "output": "PASS: Chain intact across 10 record(s).",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-001",
+      "status": "FAIL",
+      "check": "python -m pytest demo_app/ -q --tb=short",
+      "output": "....FFF                                                                  [100%]\n================================== FAILURES ===================================\n__________________________ test_delete_existing_todo __________________________\ndemo_app\\test_app.py:64: in test_delete_existing_todo\n    result = app.delete_todo(item[\"id\"])\n             ^^^^^^^^^^^^^^^\nE   AttributeError: module 'demo_app.app' has no attribute 'delete_todo'. Did you mean: 'create_todo'?\n________________________ test_delete_nonexistent_todo _________________________\ndemo_app\\test_app.py:70: in test_delete_nonexistent_todo\n    result = app.delete_todo(999)\n             ^^^^^^^^^^^^^^^\nE   AttributeError: module 'demo_app.app' has no attribute 'delete_todo'. Did you mean: 'create_todo'?\n_______________________ test_delete_removes_only_target _______________________\ndemo_app\\test_app.py:77: in test_delete_removes_only_target\n    app.delete_todo(b[\"id\"])\n    ^^^^^^^^^^^^^^^\nE   AttributeError: module 'demo_app.app' has no attribute 'delete_todo'. Did you mean: 'create_todo'?\n=========================== short test summary info ===========================\nFAILED demo_app/test_app.py::test_delete_existing_todo - AttributeError: modu...\nFAILED demo_app/test_app.py::test_delete_nonexistent_todo - AttributeError: m...\nFAILED demo_app/test_app.py::test_delete_removes_only_target - AttributeError...\n3 failed, 4 passed in 0.06s",
+      "plain_english": ""
+    },
+    {
+      "id": "FUNC-002",
+      "status": "PASS",
+      "check": "python -m py_compile countersign.py",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "DEMO-001",
+      "status": "FAIL",
+      "check": "python -c \"import ast,sys; t=ast.parse(open('demo_app/app.py').read()); sys.exit(0 if any(isinstance(n,ast.FunctionDef) and n.name=='do_DELETE' for n in ast.walk(t)) else 1)\"",
+      "output": "",
+      "plain_english": ""
+    },
+    {
+      "id": "QUAL-001",
+      "status": "PASS",
+      "check": "python -m ruff check .",
+      "output": "All checks passed!",
+      "plain_english": ""
+    }
+  ]
+}

@@ -121,3 +121,5 @@ build/
 # === Countersign project patterns ===
 ruff-cache/
 .ruff_cache/
+# Bob session exports: kept locally, PNG summaries are the public evidence
+bob_sessions/*
