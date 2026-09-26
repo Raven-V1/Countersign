@@ -36,6 +36,29 @@ def _no_network(monkeypatch):
     monkeypatch.setattr("ibm_watsonx_ai.foundation_models.ModelInference", _no_call, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def check_calls(monkeypatch) -> list[tuple[str, list[str] | None]]:
+    """Stub the command runner: no real countersign.yaml check ever runs here.
+
+    FUNC-001 runs pytest on demo_app/, so executing the real checks from a
+    test re-runs this file and recurses without bound.  git commands still go
+    to the real runner so file-list resolution is exercised; every other
+    command is recorded and reported as a PASS.
+    """
+    monkeypatch.chdir(_REPO)
+    calls: list[tuple[str, list[str] | None]] = []
+    real_run = countersign._run
+
+    def _stub_run(cmd: str, extra_args: list[str] | None = None) -> tuple[int, str]:
+        if cmd.startswith("git "):
+            return real_run(cmd, extra_args)
+        calls.append((cmd, extra_args))
+        return 0, "stubbed"
+
+    monkeypatch.setattr(countersign, "_run", _stub_run)
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # CI-1: ci mode writes no records, no Z, no watsonx
 # ---------------------------------------------------------------------------
@@ -67,29 +90,21 @@ def test_ci_writes_no_records(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# CI-2: SEC-002 with a file list runs the actual scan
+# CI-2: SEC-002 with a file list passes exactly those files to the scanner
 # ---------------------------------------------------------------------------
 
 
-def test_ci_sec002_with_file_list(tmp_path):
-    """SEC-002 receives the provided changed-files list and runs detect-secrets."""
-    # Use a real innocuous file that exists on disk.
-    safe_file = str(_REPO / "countersign.yaml")
+def test_ci_sec002_with_file_list(check_calls):
+    """SEC-002 receives the provided changed-files list as scanner arguments."""
+    # A real file on disk (cmd_ci drops paths that do not exist).
+    safe_file = "countersign.yaml"
 
-    result = subprocess.run(
-        [sys.executable, str(_REPO / "countersign.py"), "ci",
-         "--changed-files", safe_file],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        cwd=str(_REPO),
-    )
-    # countersign.yaml is not a secret; SEC-002 should PASS.
-    assert "SEC-002" in result.stdout
-    assert "PASS" in result.stdout or result.returncode == 0, (
-        f"Expected SEC-002 PASS on countersign.yaml:\n{result.stdout}\n{result.stderr}"
-    )
+    rc = countersign.cmd_ci(changed_files=[safe_file])
+
+    rules = {r["id"]: r["check"].strip() for r in countersign.load_rules()}
+    sec002_calls = [extra for cmd, extra in check_calls if cmd == rules["SEC-002"]]
+    assert sec002_calls == [[safe_file]], f"SEC-002 got {sec002_calls!r}"
+    assert rc == 0
 
 
 # ---------------------------------------------------------------------------

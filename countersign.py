@@ -39,6 +39,12 @@ YAML_FILE = Path("countersign.yaml")
 RECORDS_DIR = Path("records")
 APPROVED_HASH_FILE = Path(".countersign") / "approved_rules.sha256"
 
+# Set in every check command's environment. A gate subcommand (run/ci/check)
+# started while it is set is a nested gate (e.g. FUNC-001 → pytest → a test
+# that shells out to the gate) and refuses to run instead of recursing.
+IN_CHECK_ENV = "COUNTERSIGN_IN_CHECK"
+GATE_COMMANDS = ("run", "ci", "check")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -83,7 +89,7 @@ def _run(cmd: str, extra_args: list[str] | None = None) -> tuple[int, str]:
             encoding="utf-8",
             errors="replace",
             check=False,
-            env={**os.environ, "PYTHONUTF8": "1"},
+            env={**os.environ, "PYTHONUTF8": "1", IN_CHECK_ENV: "1"},
         )
     except FileNotFoundError as exc:
         return -1, f"Command not found: {exc}"
@@ -1102,6 +1108,14 @@ def main() -> None:
     draft_p.add_argument("--from", dest="from_file", required=True, help="Source spec file.")
 
     args = parser.parse_args()
+
+    if args.command in GATE_COMMANDS and os.environ.get(IN_CHECK_ENV) == "1":
+        print(
+            f"countersign: refusing to run '{args.command}' inside a check command "
+            f"({IN_CHECK_ENV}=1). A test or check is invoking the gate recursively.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if args.command == "run":
         sys.exit(cmd_run(skip_z=args.skip_z))
