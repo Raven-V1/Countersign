@@ -118,7 +118,7 @@ All are optional and read from `.env` or the environment.
 ```sh
 pip install git+https://github.com/Raven-V1/Countersign
 #   or pin the tested release:
-#   pip install git+https://github.com/Raven-V1/Countersign@v0.1.0
+#   pip install git+https://github.com/Raven-V1/Countersign@v0.1.1
 cd your-repo                        # must be the git repo root
 python -m countersign init          # writes the files below; never approves
 python -m countersign approve-rules # you do this, after reading countersign.yaml
