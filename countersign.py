@@ -277,6 +277,7 @@ def write_record(
     z_job_id: str | None,
     z_rc: int | None,
     wx_model_id: str = "",
+    wx_error: str = "",
 ) -> Path:
     RECORDS_DIR.mkdir(exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -293,6 +294,7 @@ def write_record(
         "z_job_id": z_job_id,
         "z_rc": z_rc,
         "wx_model_id": wx_model_id,
+        "wx_error": wx_error,
         "results": results,
     }
     filename.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -342,9 +344,10 @@ def cmd_run(skip_z: bool) -> int:
 
     # 3. Phase 3: watsonx plain-English explanations (fail-soft)
     wx_model_id = ""
+    wx_error = ""
     try:
         from wx_explain import explain_failures  # local import keeps it optional
-        explanations, wx_model_id = explain_failures(results, rules)
+        explanations, wx_model_id, wx_error = explain_failures(results, rules)
     except Exception:  # noqa: BLE001
         explanations = {}
 
@@ -364,7 +367,7 @@ def cmd_run(skip_z: bool) -> int:
         z_status = "not_implemented"  # Phase 5 will wire real Z approval
 
     # 5. Write record (chain hash is prev_fingerprint() inside write_record)
-    record_path = write_record(results, outcome, z_status, None, None, wx_model_id)
+    record_path = write_record(results, outcome, z_status, None, None, wx_model_id, wx_error)
     print_summary(rules, results, record_path)
 
     if blocking:
@@ -617,6 +620,10 @@ def cmd_draft_rules(from_file: str) -> int:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         prog="countersign",
         description="Countersign — mainframe-grade change-control gate.",

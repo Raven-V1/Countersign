@@ -123,3 +123,5 @@ ruff-cache/
 .ruff_cache/
 # Bob session exports: kept locally, PNG summaries are the public evidence
 bob_sessions/*.json
+# Claude Code local settings
+.claude/

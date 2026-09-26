@@ -136,12 +136,13 @@ def test_explain_failures_no_env(monkeypatch):
     """Missing env vars -> ({}, "")."""
     _clear_creds(monkeypatch)
 
-    result, model_id = explain_failures(
+    result, model_id, wx_error = explain_failures(
         [{"id": "FUNC-001", "status": "FAIL", "check": "pytest", "output": "error"}],
         [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}],
     )
     assert result == {}
     assert model_id == ""
+    assert wx_error == ""
 
 
 # ---------------------------------------------------------------------------
@@ -173,13 +174,14 @@ def test_explain_failures_success(monkeypatch):
             {"id": "SEC-001",  "requirement": "No bandit hits", "priority": "security"},
             {"id": "SEC-003",  "requirement": "Rules approved", "priority": "security"},
         ]
-        explanations, model_id = explain_failures(results, rules)
+        explanations, model_id, wx_error = explain_failures(results, rules)
 
     assert "FUNC-001" in explanations
     assert "SEC-001"  in explanations
     assert "SEC-003" not in explanations          # PASS — not explained
     assert model_id == "ibm/granite-4-h-small"
     assert "assertion" in explanations["FUNC-001"].lower()
+    assert wx_error == ""
 
 
 # ---------------------------------------------------------------------------
@@ -193,10 +195,11 @@ def test_explain_failures_exception(monkeypatch):
     with patch("ibm_watsonx_ai.APIClient", side_effect=RuntimeError("network down")):
         results = [{"id": "FUNC-001", "status": "FAIL", "check": "x", "output": "y"}]
         rules   = [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}]
-        explanations, model_id = explain_failures(results, rules)
+        explanations, model_id, wx_error = explain_failures(results, rules)
 
     assert explanations == {"FUNC-001": "Explanation unavailable"}
     assert model_id == ""
+    assert wx_error.startswith("RuntimeError:")
 
 
 # ---------------------------------------------------------------------------
@@ -217,9 +220,10 @@ def test_explain_failures_timeout(monkeypatch):
     ):
         results = [{"id": "FUNC-001", "status": "FAIL", "check": "x", "output": "y"}]
         rules   = [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}]
-        explanations, _model_id = explain_failures(results, rules)
+        explanations, _model_id, wx_error = explain_failures(results, rules)
 
     assert explanations == {"FUNC-001": "Explanation unavailable"}
+    assert wx_error == "TimeoutError"
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +292,7 @@ def test_explanation_cannot_change_verdict(monkeypatch):
 
     results_a  = copy.deepcopy(results_base)
     outcome_a  = "BLOCKED" if countersign.collect_blocking(rules, results_a) else "PASS"
-    exp_a, _   = explain_failures(results_a, rules)
+    exp_a, _, _ = explain_failures(results_a, rules)
     for res in results_a:
         if exp_a.get(res["id"]):
             res["plain_english"] = exp_a[res["id"]]
@@ -307,7 +311,7 @@ def test_explanation_cannot_change_verdict(monkeypatch):
         patch("ibm_watsonx_ai.Credentials"),
         patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
     ):
-        exp_b, _ = explain_failures(results_b, rules)
+        exp_b, _, _ = explain_failures(results_b, rules)
 
     for res in results_b:
         if exp_b.get(res["id"]):
@@ -477,3 +481,279 @@ def test_draft_rules_rejects_multiline_check(monkeypatch, tmp_path):
 
     assert rc == 1
     assert not (tmp_path / "countersign.proposed.yaml").exists()
+
+
+# ---------------------------------------------------------------------------
+# 14. test_parser_rule_prefix
+# ---------------------------------------------------------------------------
+
+def test_parser_rule_prefix(monkeypatch):
+    """Parser accepts 'Rule SEC-002: explanation'."""
+    _set_fake_creds(monkeypatch, "14")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model(
+        "Rule SEC-002: The secret scanner skipped because no files are queued for commit. "
+        "Use git add to queue the files you want to scan, then try again."
+    )
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "detect-secrets", "output": "0 files"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "skipped" in explanations["SEC-002"].lower()
+    assert "Explanation unavailable" not in explanations["SEC-002"]
+    assert wx_error == ""
+
+
+# ---------------------------------------------------------------------------
+# 15. test_parser_bold
+# ---------------------------------------------------------------------------
+
+def test_parser_bold(monkeypatch):
+    """Parser accepts '**SEC-002**: explanation'."""
+    _set_fake_creds(monkeypatch, "15")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model("**SEC-002**: The scan found no secrets in staged files.")
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "x", "output": "y"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "secrets" in explanations["SEC-002"].lower()
+    assert "Explanation unavailable" not in explanations["SEC-002"]
+    assert wx_error == ""
+
+
+# ---------------------------------------------------------------------------
+# 16. test_parser_dash_separator
+# ---------------------------------------------------------------------------
+
+def test_parser_dash_separator(monkeypatch):
+    """Parser accepts 'SEC-002 - explanation'."""
+    _set_fake_creds(monkeypatch, "16")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model("SEC-002 - The pre-commit hook was skipped because no files were staged.")
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "x", "output": "y"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "skipped" in explanations["SEC-002"].lower()
+    assert "Explanation unavailable" not in explanations["SEC-002"]
+    assert wx_error == ""
+
+
+# ---------------------------------------------------------------------------
+# 17. test_parser_angle_brackets
+# ---------------------------------------------------------------------------
+
+def test_parser_angle_brackets(monkeypatch):
+    """Parser accepts '<SEC-002>: explanation' — exact format from the debug run."""
+    _set_fake_creds(monkeypatch, "17")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    # Exact raw string returned by Granite in scripts/wx_debug.py run
+    debug_response = (
+        "<SEC-002>: The check failed because no files were staged for commit. "
+        "The developer should ensure that the files they intend to commit are properly "
+        "staged using `git add` before running the pre-commit hook. Once the relevant "
+        "files are staged, the check should pass if no high-entropy strings or known "
+        "key patterns are detected."
+    )
+    mock_model = _make_model(debug_response)
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "detect-secrets", "output": "0 files staged"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "staged" in explanations["SEC-002"].lower()
+    assert "Explanation unavailable" not in explanations["SEC-002"]
+    assert wx_error == ""
+
+
+# ---------------------------------------------------------------------------
+# 18. test_parser_single_rule_unlabeled
+# ---------------------------------------------------------------------------
+
+def test_parser_single_rule_unlabeled(monkeypatch):
+    """With exactly one failing rule and no ID in the response, the whole
+    stripped response is used as the explanation; wx_error is ''."""
+    _set_fake_creds(monkeypatch, "18")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    plain_text  = "No files were staged. Run git add to stage your changes first."
+    mock_model  = _make_model(plain_text)
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "x", "output": "y"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert explanations["SEC-002"] == plain_text
+    assert wx_error == ""
+
+
+# ---------------------------------------------------------------------------
+# 19. test_wx_error_on_exception
+# ---------------------------------------------------------------------------
+
+def test_wx_error_on_exception(monkeypatch):
+    """explain_failures returns wx_error containing exception info on SDK failure."""
+    _set_fake_creds(monkeypatch, "19")
+    with patch("ibm_watsonx_ai.APIClient", side_effect=RuntimeError("connection refused")):
+        results = [{"id": "FUNC-001", "status": "FAIL", "check": "pytest", "output": "err"}]
+        rules   = [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}]
+        _, _, wx_error = explain_failures(results, rules)
+    assert wx_error.startswith("RuntimeError:")
+    assert "connection refused" in wx_error
+
+
+# ---------------------------------------------------------------------------
+# 20. test_wx_error_on_timeout
+# ---------------------------------------------------------------------------
+
+def test_wx_error_on_timeout(monkeypatch):
+    """explain_failures returns 'TimeoutError' as wx_error on timeout."""
+    _set_fake_creds(monkeypatch, "20")
+
+    def _slow_client(*a, **kw):
+        time.sleep(5)
+        return MagicMock()
+
+    with (
+        patch("ibm_watsonx_ai.APIClient", side_effect=_slow_client),
+        patch("wx_explain._TIMEOUT_SECONDS", 0.05),
+    ):
+        results = [{"id": "FUNC-001", "status": "FAIL", "check": "x", "output": "y"}]
+        rules   = [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}]
+        _, _, wx_error = explain_failures(results, rules)
+    assert wx_error == "TimeoutError"
+
+
+# ---------------------------------------------------------------------------
+# 21. test_wx_error_on_parse_failure_multi_rule
+# ---------------------------------------------------------------------------
+
+def test_wx_error_on_parse_failure_multi_rule(monkeypatch):
+    """With multiple failing rules and no rule IDs in the response,
+    wx_error contains 'ParseError'."""
+    _set_fake_creds(monkeypatch, "21")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model("Sorry, I cannot provide an explanation for these checks.")
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [
+            {"id": "SEC-001", "status": "FAIL",       "check": "bandit",         "output": "issue"},
+            {"id": "SEC-002", "status": "UNVERIFIED", "check": "detect-secrets", "output": "none"},
+        ]
+        rules = [
+            {"id": "SEC-001", "requirement": "No bandit hits", "priority": "security"},
+            {"id": "SEC-002", "requirement": "No secrets",     "priority": "security"},
+        ]
+        _, _, wx_error = explain_failures(results, rules)
+    assert "ParseError" in wx_error
+
+
+# ---------------------------------------------------------------------------
+# 22. test_status_line_in_prompt
+# ---------------------------------------------------------------------------
+
+def test_status_line_in_prompt(monkeypatch):
+    """explain_failures puts 'Status: UNVERIFIED' and the cannot-count note in
+    the user message sent to model.chat()."""
+    _set_fake_creds(monkeypatch, "22")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model(
+        "SEC-002: The scanner was skipped because no files were queued. "
+        "Run git add and retry."
+    )
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "detect-secrets", "output": "0 files"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explain_failures(results, rules)
+
+    messages = mock_model.chat.call_args.kwargs["messages"]
+    user_msg = next(m["content"] for m in messages if m["role"] == "user")
+    assert "Status: UNVERIFIED" in user_msg
+    assert "cannot count as a pass" in user_msg
+
+
+# ---------------------------------------------------------------------------
+# 23. test_contradiction_guard_triggers
+# ---------------------------------------------------------------------------
+
+def test_contradiction_guard_triggers(monkeypatch):
+    """Guard replaces an explanation that claims the check passed and sets wx_error."""
+    _set_fake_creds(monkeypatch, "23")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    mock_model  = _make_model("SEC-002: The check passed. No action needed.")
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "SEC-002", "status": "UNVERIFIED", "check": "detect-secrets", "output": "0 files"}]
+        rules   = [{"id": "SEC-002", "requirement": "No secrets", "priority": "security"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "withheld" in explanations["SEC-002"].lower()
+    assert "ContradictionGuard" in wx_error
+    assert "SEC-002" in wx_error
+
+
+# ---------------------------------------------------------------------------
+# 24. test_contradiction_guard_no_trigger_on_fail
+# ---------------------------------------------------------------------------
+
+def test_contradiction_guard_no_trigger_on_fail(monkeypatch):
+    """Guard leaves a genuine FAIL explanation unchanged and wx_error stays ''."""
+    _set_fake_creds(monkeypatch, "24")
+    mock_client = _make_client(["ibm/granite-4-h-small"])
+    normal_expl = (
+        "FUNC-001: The test suite failed because an assertion raised an error. "
+        "Fix the logic in app.py and rerun pytest."
+    )
+    mock_model  = _make_model(normal_expl)
+    with (
+        patch("ibm_watsonx_ai.APIClient",    return_value=mock_client),
+        patch("ibm_watsonx_ai.Credentials"),
+        patch("ibm_watsonx_ai.foundation_models.ModelInference", return_value=mock_model),
+    ):
+        results = [{"id": "FUNC-001", "status": "FAIL", "check": "pytest", "output": "1 failed"}]
+        rules   = [{"id": "FUNC-001", "requirement": "Tests pass", "priority": "functional"}]
+        explanations, _, wx_error = explain_failures(results, rules)
+    assert "withheld" not in explanations["FUNC-001"].lower()
+    assert wx_error == ""
+
+
+def test_contradiction_guard_ignores_pytest_pass_counts():
+    """'27 tests passed' in a FAIL explanation is not a contradiction."""
+    from wx_explain import _CONTRADICTION_RE
+
+    ok = "27 tests passed but test_create_todo_returns_item failed because the id was 1, not 2."
+    assert not _CONTRADICTION_RE.search(ok)
+    for bad in (
+        "The check passed.",
+        "It passed, so no action is needed.",
+        "This check has passed.",
+        "Nothing to fix here.",
+    ):
+        assert _CONTRADICTION_RE.search(bad), bad

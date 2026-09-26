@@ -236,25 +236,41 @@ def _call_with_timeout(fn, *args, timeout: float = _TIMEOUT_SECONDS, **kwargs):
 # explain_failures
 # ---------------------------------------------------------------------------
 
+# Matches a rule ID line in any of these formats Granite may produce:
+#   SEC-002: text          Rule SEC-002: text
+#   **SEC-002**: text      `SEC-002`: text      <SEC-002>: text
+#   SEC-002 - text         SEC-002 – text  (en-dash)
+_EXPL_LINE_RE = re.compile(
+    "^(?:Rule\\s+)?(?:\\*\\*|`|<)?([A-Z]+-\\d+)(?:\\*\\*|`|>)?\\s*[:–-]\\s*(.*)"
+)
 
-def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, str], str]:
-    """Return (explanations_dict, model_id).
+# Contradiction guard — model must not claim a FAIL/UNVERIFIED check passed.
+_CONTRADICTION_RE = re.compile(
+    r"\b(?:check|it|this|rule|verification)\s+(?:has\s+|have\s+|was\s+)?passed\b"
+    r"|no action(?: is)? needed|nothing to fix",
+    re.IGNORECASE,
+)
+
+
+def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, str], str, str]:
+    """Return (explanations_dict, model_id, wx_error).
 
     explanations_dict maps rule_id -> plain-English string for every result
-    whose status is FAIL or UNVERIFIED.  Returns ({}, "") when credentials
+    whose status is FAIL or UNVERIFIED.  Returns ({}, "", "") when credentials
     are absent.  Falls back to "Explanation unavailable" per entry on any
     error.  If a model was selected before the error, model_id is still
     returned so the record shows which model was attempted.
+    wx_error is "" on success; otherwise a short diagnostic string.
 
     watsonx NEVER affects status or gate outcome.
     """
     creds = _load_credentials()
     if not creds:
-        return {}, ""
+        return {}, "", ""
 
     failing = [r for r in results if r.get("status") in ("FAIL", "UNVERIFIED")]
     if not failing:
-        return {}, ""
+        return {}, "", ""
 
     api_key, url, project_id = creds
     rule_map = {r["id"]: r for r in rules}
@@ -268,26 +284,43 @@ def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, 
         req = rule.get("requirement", rid)
         check_cmd = r.get("check", "")
         output = _redact(r.get("output", ""))
+        status = r.get("status", "UNKNOWN")
+        status_line = f"Status: {status}"
+        if status == "UNVERIFIED":
+            status_line += (
+                " (UNVERIFIED means the check did not produce evidence,"
+                " so it cannot count as a pass.)"
+            )
         sections.append(
-            f"Rule {rid}: {req}\n"
+            f"### {rid}\n"
+            f"{status_line}\n"
+            f"Requirement: {req}\n"
             f"Check command: {check_cmd}\n"
             f"Check output:\n{output}"
         )
 
     max_tokens = min(150 * len(failing), 800)
-    user_content = "\n\n".join(sections)
+    _fmt = (
+        "Answer with one line per rule, exactly like:\n"
+        "XMP-000: The login test failed because the password check returns False "
+        "for valid users. Fix the comparison in auth.py and rerun the tests."
+    )
     system_content = (
         "You are a helpful assistant for a software quality gate called Countersign. "
         "The user will give you a list of checks that have FAILED or are UNVERIFIED. "
         "For each rule, explain in plain English why it likely failed and what a "
         "developer should do to fix it. Keep each explanation to 2-3 sentences. "
-        "Format your response as:\n<RULE_ID>: <explanation>"
+        "The status given is final and was decided by deterministic checks. "
+        "Never say a check passed or that no action is needed. "
+        "Explain why it failed or why it could not be verified, and what the developer should do. "
+        + _fmt
     )
+    user_content = _fmt + "\n\n" + "\n\n".join(sections)
 
     # Track which model was selected so we can return it even on later failure
     selected_model: list[str] = [""]
 
-    def _do_explain() -> dict[str, str]:
+    def _do_explain() -> tuple[dict[str, str], str]:
         from ibm_watsonx_ai import (  # type: ignore[import-untyped]
             APIClient,
             Credentials,
@@ -315,17 +348,20 @@ def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, 
         )
         raw_text = response["choices"][0]["message"]["content"]
 
-        # Parse "<RULE_ID>: <explanation>" lines into the result dict
+        # Parse rule ID lines — accepts: SEC-002: | Rule SEC-002: |
+        # **SEC-002**: | `SEC-002`: | <SEC-002>: | SEC-002 - | SEC-002 –
         explanations: dict[str, str] = dict(fallback)
+        matched_ids: set[str] = set()
         current_id: str | None = None
         current_lines: list[str] = []
 
         def _flush() -> None:
             if current_id and current_lines:
                 explanations[current_id] = " ".join(current_lines).strip()
+                matched_ids.add(current_id)
 
         for line in (raw_text or "").splitlines():
-            m = re.match(r"^([A-Z]+-\d+):\s*(.*)", line)
+            m = _EXPL_LINE_RE.match(line)
             if m and m.group(1) in explanations:
                 _flush()
                 current_id = m.group(1)
@@ -333,14 +369,33 @@ def explain_failures(results: list[dict], rules: list[dict]) -> tuple[dict[str, 
             elif current_id:
                 current_lines.append(line)
         _flush()
-        return explanations
+
+        if not matched_ids:
+            stripped = (raw_text or "").strip()
+            if len(failing) == 1:
+                explanations[failing[0]["id"]] = stripped or "Explanation unavailable"
+                return explanations, ""
+            return explanations, "ParseError: no rule ids in response"
+
+        return explanations, ""
 
     try:
-        explanations = _call_with_timeout(_do_explain, timeout=_TIMEOUT_SECONDS)
-        return explanations, selected_model[0]
-    except Exception:  # noqa: BLE001
-        # Return fallback but preserve any model_id that was selected before failure
-        return fallback, selected_model[0]
+        explanations, wx_error = _call_with_timeout(_do_explain, timeout=_TIMEOUT_SECONDS)
+        contradicted = sorted(
+            rid for rid, expl in explanations.items()
+            if _CONTRADICTION_RE.search(expl)
+        )
+        for rid in contradicted:
+            explanations[rid] = "Explanation withheld: model output contradicted the verdict."
+        if contradicted:
+            guard = "ContradictionGuard: " + ", ".join(contradicted)
+            wx_error = f"{wx_error}; {guard}" if wx_error else guard
+        return explanations, selected_model[0], wx_error
+    except TimeoutError:
+        return fallback, selected_model[0], "TimeoutError"
+    except Exception as exc:  # noqa: BLE001
+        msg = _redact(str(exc))[:120]
+        return fallback, selected_model[0], f"{type(exc).__name__}: {msg}"
 
 
 # ---------------------------------------------------------------------------
